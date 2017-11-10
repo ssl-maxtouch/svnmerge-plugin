@@ -1,11 +1,9 @@
 package jenkins.plugins.svnmerge;
 
-import hudson.EnvVars;
 import hudson.Extension;
 import hudson.FilePath.FileCallable;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
-import hudson.model.Computer;
 import hudson.model.Action;
 import hudson.model.BuildListener;
 import hudson.model.Item;
@@ -19,8 +17,6 @@ import hudson.scm.SubversionEventHandlerImpl;
 import hudson.scm.SubversionSCM;
 import hudson.scm.SvnClientManager;
 import hudson.scm.SubversionSCM.ModuleLocation;
-import hudson.slaves.NodeProperty;
-import hudson.slaves.EnvironmentVariablesNodeProperty;
 import hudson.util.IOException2;
 import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
@@ -30,7 +26,6 @@ import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.StaplerRequest;
 import org.tmatesoft.svn.core.ISVNLogEntryHandler;
 import org.tmatesoft.svn.core.SVNCommitInfo;
-import org.tmatesoft.svn.core.SVNErrorMessage;
 import org.tmatesoft.svn.core.SVNException;
 import org.tmatesoft.svn.core.SVNLogEntry;
 import org.tmatesoft.svn.core.SVNURL;
@@ -102,9 +97,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         if (scm instanceof SubversionSCM) {
             SubversionSCM svn = (SubversionSCM) scm;
             ModuleLocation ml = svn.getLocations()[0];
-			// expand system and node environment variables as well as the project parameters
-			ml = Utility.getExpandedLocation(ml, p);
-			return ml;
+            // expand system and node environment variables as well as the project parameters
+            ml = Utility.getExpandedLocation(ml, p);
+            return ml;
         }
         return null;
     }
@@ -178,59 +173,69 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         @Override
                         public void handleEvent(SVNEvent event, double progress) throws SVNException {
                             super.handleEvent(event, progress);
-							if (event.getContentsStatus() == SVNStatusType.CONFLICTED
-									|| event.getContentsStatus() == SVNStatusType.CONFLICTED_UNRESOLVED) {
-								foundConflict[0] = true;
-							}
+                            if (event.getContentsStatus() == SVNStatusType.CONFLICTED
+                                    || event.getContentsStatus() == SVNStatusType.CONFLICTED_UNRESOLVED) {
+                                foundConflict[0] = true;
+                            }
                         }
                     };
 
                     SvnClientManager svnm = SubversionSCM.createClientManager(provider);
 
-					SVNURL up = upstreamLocation == null ? null : upstreamLocation.getSVNURL();
+                    SVNURL up = upstreamLocation == null ? null : upstreamLocation.getSVNURL();
                     SVNClientManager cm = svnm.getCore();
                     cm.setEventHandler(printHandler);
 
                     SVNWCClient wc = cm.getWCClient();
                     SVNDiffClient dc = cm.getDiffClient();
+                    SVNInfo wsState = wc.doInfo(mr, null);
 
                     logger.printf("Updating workspace to the latest revision\n");
                     long wsr = cm.getUpdateClient().doUpdate(mr, HEAD, INFINITY, false, false);
-//                    logger.printf("  Updated to rev.%d\n",wsr);  // reported by printHandler
 
-                    SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : cm.getWCClient().doInfo(up,HEAD,HEAD).getCommittedRevision();
+                    SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up,HEAD,HEAD).getCommittedRevision();
 
                     logger.printf("Merging change from the upstream %s at rev.%s\n",up,mergeRev);
                     SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(0),mergeRev);
                     dc.doMerge(up, mergeRev, Arrays.asList(r), mr, INFINITY, true, false, false, false);
                     if(foundConflict[0]) {
-                        logger.println("Found conflict. Reverting this failed merge");
+                        logger.println("\n!!! Found conflict. Reverting this failed merge !!!\n");
+                        logger.printf( "- Checkout %s\n", wsState.getURL().toString());
+                        logger.println("- Right click -> TortoiseSVN -> Merge");
+                        logger.println("  - select 'Merge a range of revisions'");
+                        logger.println("  - click Next");
+                        logger.printf( "  - set 'URL to merge from' to %s\n", up);
+                        logger.println("  - set 'Revision range to merge' to 'all revisions'");
+                        logger.println("  - click Next");
+                        logger.println("  - click Merge");
+                        logger.println("\n!!! After resolving the conflict, commit and repeat the rebase !!!\n");
+                        logger.println("Work Instructions:\nhttp://mob-doc.ssluk.solomonsystech.com/QPulseDocumentService/Documents.svc/documents/active/attachment?number=MOB-O-NFI-GU-030\n");
                         wc.doRevert(new File[]{mr},INFINITY, null);
                         return -1L;
                     } else {
-						try {
-							logger.println("Committing changes");
-							SVNCommitClient cc = cm.getCommitClient();
-							SVNCommitInfo ci = cc.doCommit(new File[] { mr },
-									false, RebaseAction.COMMIT_MESSAGE_PREFIX
-											+ "Rebasing from " + up + "@"
-											+ mergeRev, null, null, false,
-									false, INFINITY);
-							if (ci.getNewRevision() < 0) {
-								logger.println("  No changes since the last rebase. This rebase was a no-op.");
-								return 0L;
-							} else {
-								logger.println("  committed revision "
-										+ ci.getNewRevision());
-								return ci.getNewRevision();
-							}
-						} catch (SVNException e) {
-							logger.println("Failed to commit!");
-							logger.println(e.getLocalizedMessage());
-							logger.println("Reverting this failed merge.");
-							wc.doRevert(new File[] { mr }, INFINITY, null);
-							return -1L;
-						}
+                        try {
+                            logger.println("Committing changes");
+                            SVNCommitClient cc = cm.getCommitClient();
+                            SVNCommitInfo ci = cc.doCommit(new File[] { mr },
+                                    false, RebaseAction.COMMIT_MESSAGE_PREFIX
+                                            + "Rebasing from " + up + "@"
+                                            + mergeRev, null, null, false,
+                                    false, INFINITY);
+                            if (ci.getNewRevision() < 0) {
+                                logger.println("  No changes since the last rebase. This rebase was a no-op.");
+                                return 0L;
+                            } else {
+                                logger.println("  committed revision "
+                                        + ci.getNewRevision());
+                                return ci.getNewRevision();
+                            }
+                        } catch (SVNException e) {
+                            logger.println("Failed to commit!");
+                            logger.println(e.getLocalizedMessage());
+                            logger.println("Reverting this failed merge.");
+                            wc.doRevert(new File[] { mr }, INFINITY, null);
+                            return -1L;
+                        }
                     }
                 } catch (SVNException e) {
                     throw new IOException2("Failed to merge", e);
@@ -305,7 +310,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                     SvnClientManager svnm = SubversionSCM.createClientManager(provider);
 
-					SVNURL up = upstreamLocation == null ? null : upstreamLocation.getSVNURL();
+                    SVNURL up = upstreamLocation == null ? null : upstreamLocation.getSVNURL();
                     SVNClientManager cm = svnm.getCore();
                     cm.setEventHandler(printHandler);
 
@@ -317,23 +322,23 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                     // do we have any meaningful changes in this branch worthy of integration?
                     if (lastIntegrationSourceRevision !=null) {
-                    	final MutableBoolean changesFound = new MutableBoolean(false);
+                        final MutableBoolean changesFound = new MutableBoolean(false);
                         cm.getLogClient().doLog(new File[]{mr},mergeRev,SVNRevision.create(lastIntegrationSourceRevision),mergeRev,true,false,-1,new ISVNLogEntryHandler() {
                             public void handleLogEntry(SVNLogEntry e) throws SVNException {
                                 if (!changesFound.booleanValue()) {
-                                	String message = e.getMessage();
-                                	
+                                    String message = e.getMessage();
+                                    
                                     if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX)
-                                    		&& !message.startsWith(IntegrateAction.COMMIT_MESSAGE_PREFIX)) {
-                                    	changesFound.setValue(true);
+                                            && !message.startsWith(IntegrateAction.COMMIT_MESSAGE_PREFIX)) {
+                                        changesFound.setValue(true);
                                     }
                                 }
                             }
                         });
                         // didn't find anything interesting. all the changes are our merges
                         if (!changesFound.booleanValue()) {
-	                        logger.println("No changes to be integrated. Skipping integration.");
-	                        return new IntegrationResult(0,mergeRev);
+                            logger.println("No changes to be integrated. Skipping integration.");
+                            return new IntegrationResult(0,mergeRev);
                         }
                     }
                     
