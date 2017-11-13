@@ -478,13 +478,13 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         logger.printf( "- Checkout (or Update) %s\n", devbranch_URL);
         logger.println("- Right click -> TortoiseSVN -> Merge");
         logger.println("  - select 'Merge a range of revisions'");
-        logger.println("  - click Next");
+        logger.println("  - click 'Next'");
         logger.printf( "  - set 'URL to merge from' to %s\n", upstream_URL);
         logger.println("  - set 'Revision range to merge' to 'all revisions'");
-        logger.println("  - click Next");
-        logger.println("  - click Merge");
-        logger.println("  - click Edit Conflict - the merge tool will pop up");
-        logger.println("  - click Resolved");
+        logger.println("  - click 'Next'");
+        logger.println("  - click 'Merge'");
+        logger.println("  - click 'Edit conflict' - the merge tool will pop up");
+        logger.println("  - click 'Resolved'");
         logger.println("\nAfter resolving the conflict, commit and repeat the rebase\n");
         logger.println("Work Instruction:\nhttp://mob-doc.ssluk.solomonsystech.com/QPulseDocumentService/Documents.svc/documents/active/attachment?number=MOB-O-NFI-GU-030\n");
     }
