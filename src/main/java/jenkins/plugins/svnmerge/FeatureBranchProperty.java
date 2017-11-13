@@ -474,8 +474,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
     private void logger_print_rebase_conflict(final PrintStream logger, final String devbranch_URL, final String upstream_URL)
     {
-        logger.println("\n!!! Found conflict. Reverting this failed merge !!!\n");
-        logger.printf( "- Checkout %s\n", devbranch_URL);
+        logger.println("\n\n!!! Found conflict. Reverting this failed merge !!!\n");
+        logger.printf( "- Checkout (or Update) %s\n", devbranch_URL);
         logger.println("- Right click -> TortoiseSVN -> Merge");
         logger.println("  - select 'Merge a range of revisions'");
         logger.println("  - click Next");
@@ -486,7 +486,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         logger.println("  - click Edit Conflict - the merge tool will pop up");
         logger.println("  - click Resolved");
         logger.println("\nAfter resolving the conflict, commit and repeat the rebase\n");
-        logger.println("Work Instructions:\nhttp://mob-doc.ssluk.solomonsystech.com/QPulseDocumentService/Documents.svc/documents/active/attachment?number=MOB-O-NFI-GU-030\n");
+        logger.println("Work Instruction:\nhttp://mob-doc.ssluk.solomonsystech.com/QPulseDocumentService/Documents.svc/documents/active/attachment?number=MOB-O-NFI-GU-030\n");
     }
 
     private void logger_print_integration_conflict(final PrintStream logger)
