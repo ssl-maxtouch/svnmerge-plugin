@@ -1,7 +1,6 @@
 package jenkins.plugins.svnmerge;
 
 import hudson.model.AbstractProject;
-import hudson.model.Item;
 import hudson.model.Label;
 import hudson.model.Node;
 import hudson.model.Queue;
@@ -35,12 +34,12 @@ import java.util.concurrent.Future;
  *          Type that represents the parameter of the action
  */
 public abstract class AbstractSvnmergeTaskAction<P> extends TaskAction {
-	 public static final PermissionGroup PERMISSIONS = new PermissionGroup(AbstractSvnmergeTaskAction.class, Messages._PermissionGroupName());
+     public static final PermissionGroup PERMISSIONS = new PermissionGroup(AbstractSvnmergeTaskAction.class, Messages._PermissionGroupName());
      public static final Permission REBASE_PERMISSION = new Permission(PERMISSIONS,"Rebase",Messages._RebaseAction_PermissionDesc(),null, PermissionScope.ITEM);
      public static final Permission INTEGRATE_PERMISSION = new Permission(PERMISSIONS,"Integrate",Messages._IntegrateAction_PermissionDesc(),null, PermissionScope.ITEM);
 
-	
-	/*package*/ AbstractSvnmergeTaskAction() { // subtyping only allowed for this plugin
+
+    /*package*/ AbstractSvnmergeTaskAction() { // subtyping only allowed for this plugin
     }
 
     public abstract AbstractProject<?,?> getProject();
@@ -90,7 +89,8 @@ public abstract class AbstractSvnmergeTaskAction<P> extends TaskAction {
      * <p>
      * This requires that the calling thread owns the workspace.
      */
-    /*package*/ abstract long perform(TaskListener listener, P param) throws IOException, InterruptedException;
+    /*package*/
+    abstract long perform(TaskListener listener, P param) throws IOException, InterruptedException;
 
     /**
      * Which page to render in the top page?

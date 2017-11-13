@@ -63,8 +63,8 @@ import static org.tmatesoft.svn.core.wc.SVNRevision.*;
  * @author Kohsuke Kawaguchi
  */
 public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> implements Serializable {
-    private static final long serialVersionUID = -1L; 
-    
+    private static final long serialVersionUID = -1L;
+
     /**
      * Upstream job name.
      */
@@ -112,7 +112,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         if(location==null)  return null;
         return location.getSVNURL();
     }
-    
+
     public AbstractProject<?,?> getOwner() {
         return owner;
     }
@@ -157,7 +157,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         final ISVNAuthenticationProvider provider = svn.createAuthenticationProvider(getOwner(), svn.getLocations()[0]);
 
         final ModuleLocation upstreamLocation = getUpstreamSubversionLocation();
-        
+
         AbstractBuild build = owner.getSomeBuildWithWorkspace();
         if (build == null) {
             final PrintStream logger = listener.getLogger();
@@ -199,18 +199,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                     SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(0),mergeRev);
                     dc.doMerge(up, mergeRev, Arrays.asList(r), mr, INFINITY, true, false, false, false);
                     if(foundConflict[0]) {
-                        logger.println("\n!!! Found conflict. Reverting this failed merge !!!\n");
-                        logger.printf( "- Checkout %s\n", wsState.getURL().toString());
-                        logger.println("- Right click -> TortoiseSVN -> Merge");
-                        logger.println("  - select 'Merge a range of revisions'");
-                        logger.println("  - click Next");
-                        logger.printf( "  - set 'URL to merge from' to %s\n", up);
-                        logger.println("  - set 'Revision range to merge' to 'all revisions'");
-                        logger.println("  - click Next");
-                        logger.println("  - click Merge");
-                        logger.println("\n!!! After resolving the conflict, commit and repeat the rebase !!!\n");
-                        logger.println("Work Instructions:\nhttp://mob-doc.ssluk.solomonsystech.com/QPulseDocumentService/Documents.svc/documents/active/attachment?number=MOB-O-NFI-GU-030\n");
+                        logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
                         wc.doRevert(new File[]{mr},INFINITY, null);
+                        logger_print_build_status(logger, false);
                         return -1L;
                     } else {
                         try {
@@ -223,17 +214,19 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                     false, INFINITY);
                             if (ci.getNewRevision() < 0) {
                                 logger.println("  No changes since the last rebase. This rebase was a no-op.");
+                                logger_print_build_status(logger, true);
                                 return 0L;
                             } else {
-                                logger.println("  committed revision "
-                                        + ci.getNewRevision());
+                                logger.println("  committed revision " + ci.getNewRevision());
+                                logger_print_build_status(logger, true);
                                 return ci.getNewRevision();
                             }
                         } catch (SVNException e) {
-                            logger.println("Failed to commit!");
+                            logger.println("\n!!! SVNException !!!\n");
                             logger.println(e.getLocalizedMessage());
-                            logger.println("Reverting this failed merge.");
+                            logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
                             wc.doRevert(new File[] { mr }, INFINITY, null);
+                            logger_print_build_status(logger, false);
                             return -1L;
                         }
                     }
@@ -248,7 +241,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
      * Represents the result of integration.
      */
     public static class IntegrationResult implements Serializable {
-        private static final long serialVersionUID = -1L; 
+        private static final long serialVersionUID = -1L;
 
         /**
          * The merge commit in the upstream where the integration is made visible to the upstream.
@@ -293,7 +286,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         final ISVNAuthenticationProvider provider = svn.createAuthenticationProvider(getUpstreamProject(), svn.getLocations()[0]);
 
         final ModuleLocation upstreamLocation = getUpstreamSubversionLocation();
-        
+
         return owner.getModuleRoot().act(new FileCallable<IntegrationResult>() {
             public IntegrationResult invoke(File mr, VirtualChannel virtualChannel) throws IOException {
                 try {
@@ -327,7 +320,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             public void handleLogEntry(SVNLogEntry e) throws SVNException {
                                 if (!changesFound.booleanValue()) {
                                     String message = e.getMessage();
-                                    
+
                                     if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX)
                                             && !message.startsWith(IntegrateAction.COMMIT_MESSAGE_PREFIX)) {
                                         changesFound.setValue(true);
@@ -338,81 +331,83 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         // didn't find anything interesting. all the changes are our merges
                         if (!changesFound.booleanValue()) {
                             logger.println("No changes to be integrated. Skipping integration.");
-                            return new IntegrationResult(0,mergeRev);
+                            return new IntegrationResult(0, mergeRev);
                         }
                     }
-                    
+
                     logger.println("Switching to the upstream (" + up+")");
                     SVNUpdateClient uc = cm.getUpdateClient();
                     uc.doSwitch(mr, up, HEAD, HEAD, INFINITY, false, false);
 
-                    logger.printf("Merging %s (rev.%s) to the upstream\n",mergeUrl,mergeRev);
+                    logger.printf("Merging %s (rev.%s) to the upstream\n", mergeUrl, mergeRev);
                     SVNDiffClient dc = cm.getDiffClient();
                     dc.doMergeReIntegrate(
                             mergeUrl,
                             mergeRev, mr, false);
                     SVNCommitInfo ci=null;
                     if(foundConflict[0]) {
-                        logger.println("Found conflict with the upstream. Reverting this failed merge");
+                        logger.println("\n\n!!! Found conflict with the upstream. Reverting this failed merge !!!\n");
                         wc.doRevert(new File[]{mr},INFINITY, null);
                     } else {
                         logger.println("Committing changes to the upstream");
                         SVNCommitClient cc = cm.getCommitClient();
                         ci = cc.doCommit(new File[]{mr}, false, commitMessage+"\n"+mergeUrl+"@"+mergeRev, null, null, false, false, INFINITY);
-                        if(ci.getNewRevision()<0)
+                        if(ci.getNewRevision() < 0)
                             logger.println("  No changes since the last integration");
                         else
-                            logger.println("  committed revision "+ci.getNewRevision());
+                            logger.println("  committed revision " + ci.getNewRevision());
                     }
 
-                    logger.println("Switching back to the branch (" + wsState.getURL()+"@"+wsState.getRevision()+")");
+                    logger.println("Switching back to the branch (" + wsState.getURL() + "@" + wsState.getRevision() + ")");
                     uc.doSwitch(mr, wsState.getURL(), wsState.getRevision(), wsState.getRevision(), INFINITY, false, true);
 
                     if(foundConflict[0]) {
-                        logger.println("Conflict found. Please sync with the upstream to resolve this error.");
-                        return new IntegrationResult(-1,mergeRev);
+                        logger_print_integration_conflict(logger);
+                        logger_print_build_status(logger, false);
+                        return new IntegrationResult(-1, mergeRev);
                     }
 
                     long trunkCommit = ci.getNewRevision();
 
-                    if (trunkCommit>=0) {
+                    if (trunkCommit >= 0) {
                         cm.getUpdateClient().doUpdate(mr, HEAD, INFINITY, false, false);
                         SVNCommitClient cc = cm.getCommitClient();
 
-                        if (false) {
-                            // taking Jack Repennings advise not to do this.
+                        //// taking Jack Repennings advise not to do this.
 
-                            // if the trunk merge produces a commit M, then we want to do "svn merge --record-only -c M <UpstreamURL>"
-                            // to convince Subversion not to try to merge rev.M again when re-integrating from the trunk in the future,
-                            // equivalent of single commit
-                            SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(trunkCommit-1),
-                                                                      SVNRevision.create(trunkCommit));
-                            String msg = "Block the merge commit rev." + trunkCommit + " from getting merged back into our branch";
-                            logger.println(msg);
-                            dc.doMerge(up,HEAD,Arrays.asList(r), mr, INFINITY, true/*opposite of --ignore-ancestory in CLI*/, false, false, true);
+                        //// if the trunk merge produces a commit M, then we want to do "svn merge --record-only -c M <UpstreamURL>"
+                        //// to convince Subversion not to try to merge rev.M again when re-integrating from the trunk in the future,
+                        //// equivalent of single commit
+                        //SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(trunkCommit-1),
+                                                                  //SVNRevision.create(trunkCommit));
+                        //String msg = "Block the merge commit rev." + trunkCommit + " from getting merged back into our branch";
+                        //logger.println(msg);
+                        //dc.doMerge(up,HEAD,Arrays.asList(r), mr, INFINITY, true/*opposite of --ignore-ancestory in CLI*/, false, false, true);
 
-                            SVNCommitInfo bci = cc.doCommit(new File[]{mr}, false, msg, null, null, false, false, INFINITY);
-                            logger.println("  committed revision "+bci.getNewRevision());
-                            cm.getUpdateClient().doUpdate(mr, HEAD, INFINITY, false, false);
-                        }
+                        //SVNCommitInfo bci = cc.doCommit(new File[]{mr}, false, msg, null, null, false, false, INFINITY);
+                        //logger.println("  committed revision " + bci.getNewRevision());
+                        //cm.getUpdateClient().doUpdate(mr, HEAD, INFINITY, false, false);
 
                         // this is the black magic part, but my experiments reveal that we need to run trunk->branch merge --reintegrate
                         // or else future rebase fails
-                        logger.printf("Merging change from the upstream %s at rev.%s\n",up,trunkCommit);
+                        logger.printf("Merging change from the upstream %s at rev.%s\n", up, trunkCommit);
                         dc.doMergeReIntegrate(up, SVNRevision.create(trunkCommit), mr, false);
                         if(foundConflict[0]) {
                             uc.doSwitch(mr, wsState.getURL(), wsState.getRevision(), wsState.getRevision(), INFINITY, false, true);
-                            logger.println("Conflict found. Please sync with the upstream to resolve this error.");
-                            return new IntegrationResult(-1,mergeRev);
+                            logger_print_integration_conflict(logger);
+                            logger_print_build_status(logger, false);
+                            return new IntegrationResult(-1, mergeRev);
                         }
 
-                        String msg = RebaseAction.COMMIT_MESSAGE_PREFIX+"Rebasing with the integration commit that was just made in rev."+trunkCommit;
+                        String msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing with the integration commit that was just made in rev." + trunkCommit;
                         SVNCommitInfo bci = cc.doCommit(new File[]{mr}, false, msg, null, null, false, false, INFINITY);
-                        logger.println("  committed revision "+bci.getNewRevision());
+                        logger.println("  committed revision " + bci.getNewRevision());
                     }
 
+                    logger_print_build_status(logger, true);
+
                     // -1 is returned if there was no commit, so normalize that to 0
-                    return new IntegrationResult(Math.max(0,trunkCommit),mergeRev);
+                    return new IntegrationResult(Math.max(0, trunkCommit), mergeRev);
                 } catch (SVNException e) {
                     throw new IOException2("Failed to merge", e);
                 }
@@ -447,20 +442,19 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             }
                         }
                     } catch (IOException e) {
-                        LOGGER.log(Level.WARNING, "Failed to persist configuration",e);
+                        LOGGER.log(Level.WARNING, "Failed to persist configuration", e);
                     }
                 }
             }
         }
     }
 
-
     @Extension
     public static final class DescriptorImpl extends JobPropertyDescriptor {
         @Override
         public JobProperty<?> newInstance(StaplerRequest req, JSONObject formData) throws FormException {
             if(!formData.has("svnmerge"))   return null;
-            return req.bindJSON(FeatureBranchProperty.class,formData.getJSONObject("svnmerge"));
+            return req.bindJSON(FeatureBranchProperty.class, formData.getJSONObject("svnmerge"));
         }
 
         public String getDisplayName() {
@@ -477,4 +471,31 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
     }
 
     private static final Logger LOGGER = Logger.getLogger(FeatureBranchProperty.class.getName());
+
+    private void logger_print_rebase_conflict(final PrintStream logger, final String devbranch_URL, final String upstream_URL)
+    {
+        logger.println("\n!!! Found conflict. Reverting this failed merge !!!\n");
+        logger.printf( "- Checkout %s\n", devbranch_URL);
+        logger.println("- Right click -> TortoiseSVN -> Merge");
+        logger.println("  - select 'Merge a range of revisions'");
+        logger.println("  - click Next");
+        logger.printf( "  - set 'URL to merge from' to %s\n", upstream_URL);
+        logger.println("  - set 'Revision range to merge' to 'all revisions'");
+        logger.println("  - click Next");
+        logger.println("  - click Merge");
+        logger.println("  - click Edit Conflict - the merge tool will pop up");
+        logger.println("  - click Resolved");
+        logger.println("\nAfter resolving the conflict, commit and repeat the rebase\n");
+        logger.println("Work Instructions:\nhttp://mob-doc.ssluk.solomonsystech.com/QPulseDocumentService/Documents.svc/documents/active/attachment?number=MOB-O-NFI-GU-030\n");
+    }
+
+    private void logger_print_integration_conflict(final PrintStream logger)
+    {
+        logger.printf("\n!!! Conflict found. Please rebase from upstream to resolve this error !!!\n");
+    }
+
+    private void logger_print_build_status(final PrintStream logger, final boolean is_success)
+    {
+        logger.printf("\nFinished: %s\n\n", is_success ? "SUCCESS" : "FAILURE");
+    }
 }

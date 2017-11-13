@@ -17,9 +17,6 @@ import hudson.scm.SubversionSCM.ModuleLocation;
 import hudson.scm.SubversionSCM.SvnInfo;
 import hudson.security.ACL;
 import hudson.security.Permission;
-import hudson.security.PermissionGroup;
-import hudson.security.PermissionScope;
-import hudson.util.LogTaskListener;
 import jenkins.model.Jenkins;
 import jenkins.plugins.svnmerge.FeatureBranchProperty.IntegrationResult;
 
@@ -48,7 +45,7 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
          return INTEGRATE_PERMISSION;
      }
 
-	public final AbstractBuild<?,?> build;
+    public final AbstractBuild<?,?> build;
 
     /**
      * If the integration is successful, set to the revision of the commit of the merge.
@@ -61,7 +58,7 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
      * Commit in the branch that was merged into the {@link #integratedRevision}
      */
     private Long integrationSource;
-    
+
     public IntegrateAction(AbstractBuild<?,?> build) {
         this.build = build;
     }
@@ -129,15 +126,15 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
     /**
      * URL and revision to be integrated from this action.
      */
-	public SvnInfo getSvnInfo() {
-		SCM scm = getProject().getScm();
-		if (!(scm instanceof SubversionSCM)) {
-			return null;
-		} 
+    public SvnInfo getSvnInfo() {
+        SCM scm = getProject().getScm();
+        if (!(scm instanceof SubversionSCM)) {
+            return null;
+        }
 
-		// TODO: check for multiple locations ?
-		SubversionSCM svn = (SubversionSCM) scm;
-		ModuleLocation[] locations = svn.getLocations(); 
+        // TODO: check for multiple locations ?
+        SubversionSCM svn = (SubversionSCM) scm;
+        ModuleLocation[] locations = svn.getLocations();
 
         ModuleLocation firstLocation = svn.getLocations()[0];
         // expand system and node environment variables as well as the
@@ -153,15 +150,16 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
             LOGGER.log(WARNING, "Could not get SVN URL and revision", e);
         }
 
-		return null;
-	}
+        return null;
+    }
 
     /**
      * Integrate the branch.
      * <p>
      * This requires that the calling thread owns the workspace.
      */
-    /*package*/ long perform(TaskListener listener, IntegrateSetting _) throws IOException, InterruptedException {
+    /*package*/
+    long perform(TaskListener listener, IntegrateSetting _) throws IOException, InterruptedException {
         return perform(listener, getSvnInfo());
     }
 

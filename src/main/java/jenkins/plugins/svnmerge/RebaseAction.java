@@ -10,8 +10,6 @@ import hudson.scm.SubversionSCM.SvnInfo;
 import hudson.scm.SubversionTagAction;
 import hudson.security.ACL;
 import hudson.security.Permission;
-import hudson.security.PermissionGroup;
-import hudson.security.PermissionScope;
 import jenkins.model.Jenkins;
 
 import org.kohsuke.stapler.StaplerRequest;
@@ -29,10 +27,10 @@ import java.io.IOException;
  */
 public class RebaseAction extends AbstractSvnmergeTaskAction<RebaseSetting> {
 
-     protected Permission getPermission() {
-         return REBASE_PERMISSION;
-     }
-	
+    protected Permission getPermission() {
+        return REBASE_PERMISSION;
+    }
+
     public final AbstractProject<?,?> project;
 
     public RebaseAction(AbstractProject<?,?> project) {
@@ -89,7 +87,8 @@ public class RebaseAction extends AbstractSvnmergeTaskAction<RebaseSetting> {
      * <p>
      * This requires that the calling thread owns the workspace.
      */
-    /*package*/ long perform(TaskListener listener, RebaseSetting param) throws IOException, InterruptedException {
+    /*package*/
+    long perform(TaskListener listener, RebaseSetting param) throws IOException, InterruptedException {
         long rev = param.revision;
 
         if (param.permalink!=null) {

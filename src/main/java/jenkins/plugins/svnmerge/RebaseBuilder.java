@@ -26,7 +26,7 @@ public class RebaseBuilder extends Builder {
      */
     public final String permalink;
     /**
-     * Indicates whether to stop the build if the merge fails. 
+     * Indicates whether to stop the build if the merge fails.
      */
     public final boolean stopBuildIfMergeFails;
     public final boolean setUnstableIfMergeFails;
@@ -49,9 +49,9 @@ public class RebaseBuilder extends Builder {
             return true;
         }
 
-    	RebaseAction rebaseAction = new  RebaseAction(project);
-    	long result = rebaseAction.perform(listener,new RebaseSetting(permalink));
-        if(result<0){
+        RebaseAction rebaseAction = new  RebaseAction(project);
+        long result = rebaseAction.perform(listener,new RebaseSetting(permalink));
+        if (result < 0) {
             build.setResult(Result.UNSTABLE);
         }
         return !stopBuildIfMergeFails || result >= 0;
