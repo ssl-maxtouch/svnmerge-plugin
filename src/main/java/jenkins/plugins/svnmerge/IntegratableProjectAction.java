@@ -159,8 +159,20 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
             }
             urlsToCopyTo.add(branchUrl);
 
-            final String commitMessage = "[CREATE] Development branch generated from " + firstLocation.getURL();
-            if (!createSVNCopy(svnMgr, firstLocation, urlsToCopyTo, commitMessage, req, rsp)) {
+            String trunk_location = firstLocation.getURL();
+            int drop_index = trunk_location.indexOf("/repo/touch/");
+            if (drop_index >= 0) {
+                trunk_location = trunk_location.substring(drop_index+11);
+            }
+            SVNRevision trunk_revision;
+            try {
+                SVNInfo trunk_info = svnMgr.getWCClient().doInfo(SVNURL.parseURIEncoded(firstLocation.getURL()), SVNRevision.HEAD, SVNRevision.HEAD);
+                trunk_revision = trunk_info.getRevision();
+            } catch (SVNException e) {
+                trunk_revision = SVNRevision.HEAD;
+            }
+            final String commitMessage = "[CREATE] Development branch generated from " + trunk_location + " in rev." + trunk_revision.toString();
+            if (!createSVNCopy(svnMgr, firstLocation, trunk_revision, urlsToCopyTo, commitMessage, req, rsp)) {
                 return;
             }
         }
@@ -246,21 +258,26 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
      * @throws ServletException
      * @throws IOException
      */
-    private boolean createSVNCopy(SvnClientManager svnMgr, ModuleLocation originalLocation, List<String> urlsToCopyTo,
-                                  String commitMessage, StaplerRequest req, StaplerResponse rsp) throws ServletException, IOException {
+    private boolean createSVNCopy(SvnClientManager svnMgr,
+                                  ModuleLocation originalLocation,
+                                  SVNRevision originalRevision,
+                                  List<String> urlsToCopyTo,
+                                  String commitMessage,
+                                  StaplerRequest req,
+                                  StaplerResponse rsp) throws ServletException, IOException {
 
         try {
             for (String urlToCopyTo : urlsToCopyTo) {
                 SVNURL dst = SVNURL.parseURIEncoded(urlToCopyTo);
                 svnMgr.getCopyClient().doCopy(
-                        new SVNCopySource[] {
-                                new SVNCopySource(SVNRevision.HEAD, SVNRevision.HEAD, originalLocation.getSVNURL()) },
-                        dst,
+                    new SVNCopySource[] {
+                        new SVNCopySource(originalRevision, originalRevision, originalLocation.getSVNURL()) },
+                    dst,
                     false,
                     true,
                     true,
                     commitMessage,
-                        new SVNProperties());
+                    new SVNProperties());
             }
 
             return true;
