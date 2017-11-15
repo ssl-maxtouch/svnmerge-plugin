@@ -3,8 +3,6 @@ package jenkins.plugins.svnmerge;
 import hudson.BulkChange;
 import hudson.Util;
 import hudson.model.Action;
-import hudson.model.Item;
-import hudson.model.ItemGroup;
 import hudson.model.Items;
 import hudson.model.TopLevelItem;
 import hudson.model.AbstractItem;
@@ -27,7 +25,6 @@ import javax.servlet.ServletException;
 import jenkins.model.DirectlyModifiableTopLevelItemGroup;
 import jenkins.model.Jenkins;
 
-import org.apache.commons.lang.StringUtils;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.StaplerRequest;
 import org.kohsuke.stapler.StaplerResponse;
@@ -53,7 +50,8 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
 
     private final IntegratableProject ip;
 
-    /*package*/ IntegratableProjectAction(IntegratableProject ip) {
+    /*package*/
+    IntegratableProjectAction(IntegratableProject ip) {
         this.ip = ip;
         this.project = ip.getOwner();
     }
@@ -79,7 +77,7 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
      */
     public List<AbstractProject<?,?>> getBranches() {
         // looking for the project's full name because we want to search nested projects
-    	String n = project.getFullName();
+        String n = project.getFullName();
         List<AbstractProject<?,?>> r  = new ArrayList<AbstractProject<?,?>>();
         // iterating over all items in tree (recursively)
         for (AbstractProject<?,?> p : Jenkins.getInstance().getAllItems(AbstractProject.class)) {
@@ -89,13 +87,13 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
         }
         return r;
     }
-    
+
     /**
-     * 
+     *
      * @return
      */
     public RepositoryLayoutInfo getRepositoryLayout() {
-    	SCM scm = project.getScm();
+        SCM scm = project.getScm();
         if (!(scm instanceof SubversionSCM)) {
             return null;
         }
@@ -104,40 +102,29 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
         ModuleLocation firstLocation = svn.getLocations()[0];
         // expand system and node environment variables as well as the project parameters
         firstLocation = Utility.getExpandedLocation(firstLocation, project);
-		return getRepositoryLayout(firstLocation);
+        return getRepositoryLayout(firstLocation);
     }
 
     private RepositoryLayoutInfo getRepositoryLayout(ModuleLocation location) {
-		return new RepositoryLayoutInfo(location.getURL());
+        return new RepositoryLayoutInfo(location.getURL());
     }
 
     @RequirePOST
-    public void doNewBranch(StaplerRequest req, StaplerResponse rsp, 
-    						@QueryParameter String name, 
-    						@QueryParameter boolean attach, 
-    						@QueryParameter String commitMessage, 
-    						@QueryParameter String branchLocation,
-    						@QueryParameter boolean createTag,
-    						@QueryParameter String tagLocation) throws ServletException, IOException {
-        
+    public void doNewBranch(StaplerRequest req, StaplerResponse rsp,
+                            @QueryParameter String name,
+                            @QueryParameter boolean attach) throws ServletException, IOException {
+
         name = Util.fixEmptyAndTrim(name);
-        
+
         if (name==null) {
-        	sendError("Name is required");
-        	return;
+            sendError("Name is required");
+            return;
         }
-        
-        commitMessage = Util.fixEmptyAndTrim(commitMessage);
-        
-        if (commitMessage==null) {
-        	//the commit message isn't used when attaching to an existing location
-        	commitMessage = "Created a feature branch from Jenkins with name: "+name;
-        }
-        
+
         SCM scm = project.getScm();
         if (!(scm instanceof SubversionSCM)) {
-        	sendError("This project doesn't use Subversion as SCM");
-        	return;
+            sendError("This project doesn't use Subversion as SCM");
+            return;
         }
         // TODO: check for multiple locations
         SubversionSCM svn = (SubversionSCM) scm;
@@ -145,117 +132,75 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
         // expand system and node environment variables as well as the project parameters
         firstLocation = Utility.getExpandedLocation(firstLocation, project);
 
+        // ssluk - forcing branch under branches/ no RepositoryLayoutEnum.CUSTOM
         RepositoryLayoutInfo layoutInfo = getRepositoryLayout(firstLocation);
-        
-        branchLocation =  Util.fixEmptyAndTrim(branchLocation);
-        tagLocation = Util.fixEmptyAndTrim(tagLocation);
-        
-        if (layoutInfo.getLayout() == RepositoryLayoutEnum.CUSTOM) {
-        	/*
-        	 * in case of custom layout the user must provide the full new branch url
-        	 * (and optionally the full new tag url)
-        	 */
-        	if (StringUtils.isEmpty(branchLocation)) {
-        		sendError("Branch Location is required for custom repository layout");
-        	}
-        	if (!attach && createTag && StringUtils.isEmpty(tagLocation)) {
-        		sendError("Tag Location is required for custom repository layout");
-        	}
-        }
-        
-        String branchUrl;
-        if (StringUtils.isNotEmpty(branchLocation)) {
-        	//using override value
-        	branchUrl = branchLocation;
-        } else {
-        	//using default value
-        	branchUrl = layoutInfo.getDefaultNewBranchUrl().replace("<new_branch_name>", name);
-        }
-        
+        assert layoutInfo.getLayout() != RepositoryLayoutEnum.CUSTOM;
+        String branchUrl = layoutInfo.getDefaultNewBranchUrl().replace("<new_branch_name>", name);
+
         if (!attach) {
-        	SvnClientManager svnMgr = SubversionSCM.createClientManager(
-        			svn.createAuthenticationProvider(project, firstLocation));
-        	
-	        List<String> urlsToCopyTo = new ArrayList<String>();
-	        SVNURL svnUrl = null;
-	    	try {
-	    		svnUrl = SVNURL.parseURIEncoded(branchUrl);
-	    		SVNInfo info = svnMgr.getWCClient().doInfo(svnUrl, SVNRevision.HEAD, SVNRevision.HEAD);
-	    		if(info.getKind()== SVNNodeKind.DIR) {
-	    			// ask the user if we should attach
-	    			req.getView(this,"_attach.jelly").forward(req,rsp);
-	    			return;
-	    		} else {
-	    			sendError(info.getURL()+" already exists.");
-	    			return;
-	    		}
-	    	} catch (SVNException e) {
-	    		// path doesn't exist, the new branch can be created
-	    	}
-	        urlsToCopyTo.add(branchUrl);
-	        
-	    	String tagUrl = null;
-	        if (createTag) {
-	        	//can be true only when not attaching
-	        	if (StringUtils.isNotEmpty(tagLocation)) {
-	        		//using override value
-	        		tagUrl = tagLocation;
-	        	} else {
-	        		//using default value
-	        		tagUrl = layoutInfo.getDefaultNewDevTagUrl().replace("<new_branch_name>", name);
-	        	}
-	        	try {
-	        		svnUrl = SVNURL.parseURIEncoded(tagUrl);
-	        		SVNInfo info = svnMgr.getWCClient().doInfo(svnUrl, SVNRevision.HEAD, SVNRevision.HEAD);
-	        		sendError(info.getURL()+" already exists.");
-	        		return;
-	        	} catch (SVNException e) {
-	        		// path doesn't exist, the new tag can be created
-	        	}
-	        	urlsToCopyTo.add(tagUrl);
-	        }
-        
-			if (!createSVNCopy(svnMgr, firstLocation, urlsToCopyTo, commitMessage, req, rsp)) {
-				return;
-			}
+            SvnClientManager svnMgr = SubversionSCM.createClientManager(
+                    svn.createAuthenticationProvider(project, firstLocation));
+
+            List<String> urlsToCopyTo = new ArrayList<String>();
+            SVNURL svnUrl = null;
+            try {
+                svnUrl = SVNURL.parseURIEncoded(branchUrl);
+                SVNInfo info = svnMgr.getWCClient().doInfo(svnUrl, SVNRevision.HEAD, SVNRevision.HEAD);
+                if(info.getKind()== SVNNodeKind.DIR) {
+                    // ask the user if we should attach to existing branch
+                    req.getView(this, "_attach.jelly").forward(req, rsp);
+                    return;
+                } else {
+                    sendError(info.getURL()+" already exists.");
+                    return;
+                }
+            } catch (SVNException e) {
+                // path doesn't exist, the new branch can be created
+            }
+            urlsToCopyTo.add(branchUrl);
+
+            final String commitMessage = "[CREATE] Development branch generated from " + firstLocation.getURL();
+            if (!createSVNCopy(svnMgr, firstLocation, urlsToCopyTo, commitMessage, req, rsp)) {
+                return;
+            }
         }
-        
-    	// if the request wasn't forwarded
-    	// copy a job, and adjust its properties for integration
-    	AbstractProject<?,?> copy = Jenkins.getInstance().copy(project, project.getName() + "-" + name.replaceAll("/", "-"));
-    	BulkChange bc = new BulkChange(copy);
 
-    	try {
+        // if the request wasn't forwarded
+        // copy a job, and adjust its properties for integration
+        AbstractProject<?,?> copy = Jenkins.getInstance().copy(project, project.getName() + "-" + name.replaceAll("/", "-"));
+        BulkChange bc = new BulkChange(copy);
 
-    		// moving the copy to its parent location
-    		moveProjectToItsUpstreamProjectLocation(copy, project);
-    		// the copy doesn't born accepting integration from subversion feature branches..
-    		copy.removeProperty(IntegratableProject.class);
-			// ... and it's a feature branch of its upstream project (which can
-			// be located anywhere in the tree, that's why we are pointing
-			// to its full name)
-    		((AbstractProject)copy).addProperty(new FeatureBranchProperty(project.getFullName())); // pointless cast for working around javac bug as of JDK1.6.0_02
-    		// update the SCM config to point to the branch
-    		SubversionSCM svnScm = (SubversionSCM)copy.getScm();
-    		copy.setScm(
-    				new SubversionSCM(
-    						Arrays.asList(firstLocation.withRemote(branchUrl)),
-    						svnScm.getWorkspaceUpdater(),
-    						svnScm.getBrowser(),
-    						svnScm.getExcludedRegions(),
-    						svnScm.getExcludedUsers(),
-    						svnScm.getExcludedRevprop(),
-    						svnScm.getExcludedCommitMessages(),
-    						svnScm.getIncludedRegions(),
-    						svnScm.isIgnoreDirPropChanges(),
-    						svnScm.isFilterChangelog(),
-    						svnScm.getAdditionalCredentials()
-    						));
-    	} finally {
-    		bc.commit();
-    	}
-    	
-    	rsp.sendRedirect2(req.getContextPath()+"/"+copy.getUrl());
+        try {
+
+            // moving the copy to its parent location
+            moveProjectToItsUpstreamProjectLocation(copy, project);
+            // the copy doesn't born accepting integration from subversion feature branches..
+            copy.removeProperty(IntegratableProject.class);
+            // ... and it's a feature branch of its upstream project (which can
+            // be located anywhere in the tree, that's why we are pointing
+            // to its full name)
+            ((AbstractProject)copy).addProperty(new FeatureBranchProperty(project.getFullName())); // pointless cast for working around javac bug as of JDK1.6.0_02
+            // update the SCM config to point to the branch
+            SubversionSCM svnScm = (SubversionSCM)copy.getScm();
+            copy.setScm(
+                    new SubversionSCM(
+                            Arrays.asList(firstLocation.withRemote(branchUrl)),
+                            svnScm.getWorkspaceUpdater(),
+                            svnScm.getBrowser(),
+                            svnScm.getExcludedRegions(),
+                            svnScm.getExcludedUsers(),
+                            svnScm.getExcludedRevprop(),
+                            svnScm.getExcludedCommitMessages(),
+                            svnScm.getIncludedRegions(),
+                            svnScm.isIgnoreDirPropChanges(),
+                            svnScm.isFilterChangelog(),
+                            svnScm.getAdditionalCredentials()
+                            ));
+        } finally {
+            bc.commit();
+        }
+
+        rsp.sendRedirect2(req.getContextPath()+"/"+copy.getUrl());
     }
 
     /**
@@ -266,26 +211,26 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
      * @throws IOException
      */
     @SuppressWarnings("unchecked")
-	private <I extends AbstractItem & TopLevelItem> void moveProjectToItsUpstreamProjectLocation(
-			AbstractProject<?, ?> project, AbstractProject<?, ?> upstreamProject)
-			throws IOException {
+    private <I extends AbstractItem & TopLevelItem> void moveProjectToItsUpstreamProjectLocation(
+            AbstractProject<?, ?> project, AbstractProject<?, ?> upstreamProject)
+            throws IOException {
 
-    	// we need to check if the upstream project isn't in the root (hudson.model.Hudson)
-		if (upstreamProject.getParent() != null
-				&& (upstreamProject.getParent() instanceof DirectlyModifiableTopLevelItemGroup)
-				&& !(upstreamProject.getParent() instanceof Jenkins)) {
+        // we need to check if the upstream project isn't in the root (hudson.model.Hudson)
+        if (upstreamProject.getParent() != null
+                && (upstreamProject.getParent() instanceof DirectlyModifiableTopLevelItemGroup)
+                && !(upstreamProject.getParent() instanceof Jenkins)) {
 
-			// get the right destination
-			DirectlyModifiableTopLevelItemGroup destination = (DirectlyModifiableTopLevelItemGroup) upstreamProject
-					.getParent();
+            // get the right destination
+            DirectlyModifiableTopLevelItemGroup destination = (DirectlyModifiableTopLevelItemGroup) upstreamProject
+                    .getParent();
             // check if we can move to this destination
-			if (!(destination == project.getParent() || destination
-					.canAdd((TopLevelItem) project)
-					&& ((AccessControlled) destination)
-							.hasPermission(Job.CREATE))) {
+            if (!(destination == project.getParent() || destination
+                    .canAdd((TopLevelItem) project)
+                    && ((AccessControlled) destination)
+                            .hasPermission(Job.CREATE))) {
                 return;
             }
-			// moving
+            // moving
             Items.move((I)project, destination);
         }
     }
@@ -301,28 +246,27 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
      * @throws ServletException
      * @throws IOException
      */
-    private boolean createSVNCopy(SvnClientManager svnMgr, ModuleLocation originalLocation, List<String> urlsToCopyTo, 
-    						   String commitMessage, StaplerRequest req, StaplerResponse rsp) throws ServletException, IOException {
-         
+    private boolean createSVNCopy(SvnClientManager svnMgr, ModuleLocation originalLocation, List<String> urlsToCopyTo,
+                                  String commitMessage, StaplerRequest req, StaplerResponse rsp) throws ServletException, IOException {
+
         try {
             for (String urlToCopyTo : urlsToCopyTo) {
-            	SVNURL dst = SVNURL.parseURIEncoded(urlToCopyTo);
-            	svnMgr.getCopyClient().doCopy(
+                SVNURL dst = SVNURL.parseURIEncoded(urlToCopyTo);
+                svnMgr.getCopyClient().doCopy(
                         new SVNCopySource[] {
                                 new SVNCopySource(SVNRevision.HEAD, SVNRevision.HEAD, originalLocation.getSVNURL()) },
-                        dst, 
-            		false, 
-            		true,
-            		true,
-            		commitMessage,
+                        dst,
+                    false,
+                    true,
+                    true,
+                    commitMessage,
                         new SVNProperties());
             }
-            
+
             return true;
         } catch (SVNException e) {
             sendError(e);
-        	return false;
+            return false;
         }
-	}
-
+    }
 }

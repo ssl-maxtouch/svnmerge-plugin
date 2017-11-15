@@ -27,8 +27,8 @@ l.layout (norefresh:true, title:"Feature Branches of ${my.project.displayName}")
                 f.submit(value:_("Yes"))
             }
         }
-		if (request.getParameter('createTag')) {
-			p(_("tagInfo"))
-		}
+        if (request.getParameter('createTag')) {
+            p(_("tagInfo"))
+        }
     }
 }
