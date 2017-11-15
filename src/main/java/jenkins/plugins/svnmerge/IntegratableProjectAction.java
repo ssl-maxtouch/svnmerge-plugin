@@ -171,7 +171,7 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
             } catch (SVNException e) {
                 trunk_revision = SVNRevision.HEAD;
             }
-            final String commitMessage = "[CREATE] Development branch generated from " + trunk_location + " in rev." + trunk_revision.toString();
+            final String commitMessage = "[CREATE] Development branch created from " + trunk_location + "?r=" + trunk_revision.toString();
             if (!createSVNCopy(svnMgr, firstLocation, trunk_revision, urlsToCopyTo, commitMessage, req, rsp)) {
                 return;
             }
