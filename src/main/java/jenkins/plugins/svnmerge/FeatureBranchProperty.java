@@ -166,10 +166,11 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         }
         return build.getModuleRoot().act(new FileCallable<Long>() {
             public Long invoke(File mr, VirtualChannel virtualChannel) throws IOException {
-                try {
+                try
+                {
                     final PrintStream logger = listener.getLogger();
                     final boolean[] foundConflict = new boolean[1];
-                    ISVNEventHandler printHandler = new SubversionEventHandlerImpl(logger,mr) {
+                    ISVNEventHandler printHandler = new SubversionEventHandlerImpl(logger, mr) {
                         @Override
                         public void handleEvent(SVNEvent event, double progress) throws SVNException {
                             super.handleEvent(event, progress);
@@ -184,19 +185,33 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                     SVNURL up = upstreamLocation == null ? null : upstreamLocation.getSVNURL();
                     SVNClientManager cm = svnm.getCore();
+                    SVNUpdateClient uc = cm.getUpdateClient();
                     cm.setEventHandler(printHandler);
 
                     SVNWCClient wc = cm.getWCClient();
                     SVNDiffClient dc = cm.getDiffClient();
                     SVNInfo wsState = wc.doInfo(mr, null);
 
-                    logger.printf("Updating workspace to the latest revision\n");
-                    long wsr = cm.getUpdateClient().doUpdate(mr, HEAD, INFINITY, false, false);
+                    SVNURL job_svn_url = svn.getLocations()[0].getSVNURL();
+                    if (!wsState.getURL().toString().equals(job_svn_url.toString()))
+                    {
+                        logger.printf("Workspace svn URL is %s\n", wsState.getURL());
+                        logger.println("Switching to job svn URL (" + job_svn_url + ")");
+                        uc.doSwitch(mr, job_svn_url, HEAD, HEAD, INFINITY, false, false);
+                    }
+                    else
+                    {
+                        logger.printf("Updating workspace to the latest revision\n");
+                        uc.doUpdate(mr, HEAD, INFINITY, false, false);
+                    }
 
-                    SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up,HEAD,HEAD).getCommittedRevision();
+                    wsState = wc.doInfo(mr, null);
+                    logger.printf("Current revision is %s\n", wsState.getCommittedRevision().toString());
 
-                    logger.printf("Merging change from the upstream %s at rev.%s\n",up,mergeRev);
-                    SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(0),mergeRev);
+                    SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
+
+                    logger.printf("Merging change from the upstream %s at rev.%s\n", up, mergeRev);
+                    SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(0), mergeRev);
                     dc.doMerge(up, mergeRev, Arrays.asList(r), mr, INFINITY, true, false, false, false);
                     if(foundConflict[0]) {
                         logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
@@ -359,7 +374,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                     }
 
                     logger.println("Switching back to the branch (" + wsState.getURL() + "@" + wsState.getRevision() + ")");
-                    uc.doSwitch(mr, wsState.getURL(), wsState.getRevision(), wsState.getRevision(), INFINITY, false, true);
+                    uc.doSwitch(mr, wsState.getURL(), wsState.getRevision(), wsState.getRevision(), INFINITY, false, false);
 
                     if(foundConflict[0]) {
                         logger_print_integration_conflict(logger);
@@ -393,7 +408,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         logger.printf("Merging change from the upstream %s at rev.%s\n", up, trunkCommit);
                         dc.doMergeReIntegrate(up, SVNRevision.create(trunkCommit), mr, false);
                         if(foundConflict[0]) {
-                            uc.doSwitch(mr, wsState.getURL(), wsState.getRevision(), wsState.getRevision(), INFINITY, false, true);
+                            uc.doSwitch(mr, wsState.getURL(), wsState.getRevision(), wsState.getRevision(), INFINITY, false, false);
                             logger_print_integration_conflict(logger);
                             logger_print_build_status(logger, false);
                             return new IntegrationResult(-1, mergeRev);
