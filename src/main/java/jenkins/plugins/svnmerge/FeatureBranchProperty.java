@@ -54,6 +54,7 @@ import java.util.logging.Logger;
 import org.apache.commons.lang.mutable.MutableLong;
 
 import static org.tmatesoft.svn.core.SVNDepth.*;
+import org.tmatesoft.svn.core.wc.SVNConflictChoice;
 import static org.tmatesoft.svn.core.wc.SVNRevision.*;
 
 /**
@@ -205,6 +206,11 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         logger.printf("Workspace svn URL is %s\n", wsState.getURL());
 
+                        logger.println("Cleaning workspace...");
+                        wc.doResolve(mr, INFINITY, SVNConflictChoice.BASE);
+                        wc.doRevert(new File[] { mr }, INFINITY, null);
+                        wc.doCleanup(mr);
+
                         if (!wsState.getURL().toString().equals(job_svn_url.toString()))
                         {
                             logger.println("Switching to job svn URL (" + job_svn_url + ")");
@@ -246,7 +252,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         if(foundConflict[0])
                         {
                             logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
-                            wc.doRevert(new File[]{mr},INFINITY, null);
+                            wc.doRevert(new File[] { mr }, INFINITY, null);
                             logger_print_build_status(logger, false);
                             return -1L;
                         }
@@ -422,7 +428,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             }
                         );
 
-                        assert branch_first_revision.longValue() != 0;
                         logger.println("The first revision of this branch is " + branch_first_revision.longValue());
 
                         // do we have any meaningful changes in this branch worthy of integration?
@@ -435,6 +440,11 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         SVNInfo wsState = wc.doInfo(mr, null);
                         logger.printf("Workspace svn URL is %s\n", wsState.getURL());
+
+                        logger.println("Cleaning workspace...");
+                        wc.doResolve(mr, INFINITY, SVNConflictChoice.BASE);
+                        wc.doRevert(new File[] { mr }, INFINITY, null);
+                        wc.doCleanup(mr);
 
                         // workspace must be pointing to the upstream
                         if (!wsState.getURL().toString().equals(up.toString()))
@@ -458,7 +468,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                         false); /*depthIsSticky*/
                         }
 
-                        wc.doRevert(new File[] { mr }, INFINITY, null);
                         wsState = wc.doInfo(mr, null);
                         logger.printf("Workspace revision is %s\n", wsState.getCommittedRevision().toString());
 
@@ -481,7 +490,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         if(foundConflict[0])
                         {
                             logger.println("\n\n!!! Found conflict with the upstream. Reverting this failed merge !!!\n");
-                            wc.doRevert(new File[]{mr}, INFINITY, null);
+                            wc.doRevert(new File[] { mr }, INFINITY, null);
                         }
                         else
                         {
