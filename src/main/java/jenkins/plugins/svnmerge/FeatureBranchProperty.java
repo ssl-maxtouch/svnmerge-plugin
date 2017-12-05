@@ -51,6 +51,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.apache.commons.lang.mutable.MutableLong;
 
 import static org.tmatesoft.svn.core.SVNDepth.*;
 import static org.tmatesoft.svn.core.wc.SVNRevision.*;
@@ -152,104 +153,150 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
      *      -1 if it failed and the failure was handled gracefully
      *      (typically this means a merge conflict.)
      */
-    public long rebase(final TaskListener listener, final long upstreamRev) throws IOException, InterruptedException {
+    public long rebase(final TaskListener listener, final long upstreamRev) throws IOException, InterruptedException
+    {
         final SubversionSCM svn = (SubversionSCM) getOwner().getScm();
         final ISVNAuthenticationProvider provider = svn.createAuthenticationProvider(getOwner(), svn.getLocations()[0]);
 
         final ModuleLocation upstreamLocation = getUpstreamSubversionLocation();
 
         AbstractBuild build = owner.getSomeBuildWithWorkspace();
-        if (build == null) {
+        if (build == null)
+        {
             final PrintStream logger = listener.getLogger();
             logger.print("No workspace found for project! Please perform a build first.\n");
             return -1L;
         }
-        return build.getModuleRoot().act(new FileCallable<Long>() {
-            public Long invoke(File mr, VirtualChannel virtualChannel) throws IOException {
-                try
+        return build.getModuleRoot().act(
+            new FileCallable<Long>()
+            {
+                public Long invoke(File mr, VirtualChannel virtualChannel) throws IOException
                 {
-                    final PrintStream logger = listener.getLogger();
-                    final boolean[] foundConflict = new boolean[1];
-                    ISVNEventHandler printHandler = new SubversionEventHandlerImpl(logger, mr) {
-                        @Override
-                        public void handleEvent(SVNEvent event, double progress) throws SVNException {
-                            super.handleEvent(event, progress);
-                            if (event.getContentsStatus() == SVNStatusType.CONFLICTED
-                                    || event.getContentsStatus() == SVNStatusType.CONFLICTED_UNRESOLVED) {
-                                foundConflict[0] = true;
-                            }
-                        }
-                    };
-
-                    SvnClientManager svnm = SubversionSCM.createClientManager(provider);
-
-                    SVNURL up = upstreamLocation == null ? null : upstreamLocation.getSVNURL();
-                    SVNClientManager cm = svnm.getCore();
-                    SVNUpdateClient uc = cm.getUpdateClient();
-                    cm.setEventHandler(printHandler);
-
-                    SVNWCClient wc = cm.getWCClient();
-                    SVNDiffClient dc = cm.getDiffClient();
-                    SVNInfo wsState = wc.doInfo(mr, null);
-
-                    SVNURL job_svn_url = svn.getLocations()[0].getSVNURL();
-                    if (!wsState.getURL().toString().equals(job_svn_url.toString()))
+                    try
                     {
+                        final PrintStream logger = listener.getLogger();
+                        final boolean[] foundConflict = new boolean[1];
+                        ISVNEventHandler printHandler = new SubversionEventHandlerImpl(logger, mr)
+                        {
+                            @Override
+                            public void handleEvent(SVNEvent event, double progress) throws SVNException
+                            {
+                                super.handleEvent(event, progress);
+                                if (event.getContentsStatus() == SVNStatusType.CONFLICTED
+                                    || event.getContentsStatus() == SVNStatusType.CONFLICTED_UNRESOLVED)
+                                {
+                                    foundConflict[0] = true;
+                                }
+                            }
+                        };
+
+                        SvnClientManager svnm = SubversionSCM.createClientManager(provider);
+
+                        SVNURL up = upstreamLocation.getSVNURL();
+                        SVNURL job_svn_url = svn.getLocations()[0].getSVNURL();
+
+                        SVNClientManager cm = svnm.getCore();
+                        SVNUpdateClient uc = cm.getUpdateClient();
+                        cm.setEventHandler(printHandler);
+
+                        SVNWCClient wc = cm.getWCClient();
+                        SVNInfo wsState = wc.doInfo(mr, null);
+                        SVNDiffClient dc = cm.getDiffClient();
+
                         logger.printf("Workspace svn URL is %s\n", wsState.getURL());
-                        logger.println("Switching to job svn URL (" + job_svn_url + ")");
-                        uc.doSwitch(mr, job_svn_url, HEAD, HEAD, INFINITY, false, false);
-                    }
-                    else
-                    {
-                        logger.printf("Updating workspace to the latest revision\n");
-                        uc.doUpdate(mr, HEAD, INFINITY, false, false);
-                    }
 
-                    wsState = wc.doInfo(mr, null);
-                    logger.printf("Current revision is %s\n", wsState.getCommittedRevision().toString());
+                        if (!wsState.getURL().toString().equals(job_svn_url.toString()))
+                        {
+                            logger.println("Switching to job svn URL (" + job_svn_url + ")");
+                            uc.doSwitch(mr,
+                                        job_svn_url,
+                                        HEAD,
+                                        HEAD,
+                                        INFINITY,
+                                        false,  /*allowUnversionedObstructions*/
+                                        false); /*depthIsSticky*/
+                        }
+                        else
+                        {
+                            logger.printf("Updating workspace to the latest revision\n");
+                            uc.doUpdate(mr,
+                                        HEAD,
+                                        INFINITY,
+                                        false,  /*allowUnversionedObstructions*/
+                                        false); /*depthIsSticky*/
+                        }
 
-                    SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
+                        wc.doRevert(new File[] { mr }, INFINITY, null);
+                        wsState = wc.doInfo(mr, null);
+                        logger.printf("Workspace revision is %s\n", wsState.getCommittedRevision().toString());
 
-                    logger.printf("Merging change from the upstream %s at rev.%s\n", up, mergeRev);
-                    SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(0), mergeRev);
-                    dc.doMerge(up, mergeRev, Arrays.asList(r), mr, INFINITY, true, false, false, false);
-                    if(foundConflict[0]) {
-                        logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
-                        wc.doRevert(new File[]{mr},INFINITY, null);
-                        logger_print_build_status(logger, false);
-                        return -1L;
-                    } else {
-                        try {
-                            logger.println("Committing changes");
-                            SVNCommitClient cc = cm.getCommitClient();
-                            SVNCommitInfo ci = cc.doCommit(new File[] { mr },
-                                    false, RebaseAction.COMMIT_MESSAGE_PREFIX
-                                            + "Rebasing from " + up + "@"
-                                            + mergeRev, null, null, false,
-                                    false, INFINITY);
-                            if (ci.getNewRevision() < 0) {
-                                logger.println("  No changes since the last rebase. This rebase was a no-op.");
-                                logger_print_build_status(logger, true);
-                                return 0L;
-                            } else {
-                                logger.println("  committed revision " + ci.getNewRevision());
-                                logger_print_build_status(logger, true);
-                                return ci.getNewRevision();
-                            }
-                        } catch (SVNException e) {
-                            logger.println("\n!!! SVNException !!!\n");
-                            logger.println(e.getLocalizedMessage());
+                        SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
+
+                        logger.printf("Merging change from the upstream %s at rev.%s\n", up, mergeRev);
+                        SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(0), mergeRev);
+                        dc.doMerge(up,
+                                   mergeRev,
+                                   Arrays.asList(r),
+                                   mr,
+                                   INFINITY,
+                                   true,   /*useAncestry*/
+                                   false,  /*force*/
+                                   false,  /*dryRun*/
+                                   false); /*recordOnly*/
+                        if(foundConflict[0])
+                        {
                             logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
-                            wc.doRevert(new File[] { mr }, INFINITY, null);
+                            wc.doRevert(new File[]{mr},INFINITY, null);
                             logger_print_build_status(logger, false);
                             return -1L;
                         }
+                        else
+                        {
+                            try
+                            {
+                                logger.println("Committing changes");
+                                SVNCommitClient cc = cm.getCommitClient();
+                                SVNCommitInfo ci = cc.doCommit(new File[] { mr },
+                                                               false, /*keepLocks*/
+                                                               RebaseAction.COMMIT_MESSAGE_PREFIX
+                                                                   + "Rebasing from " + up + "@"
+                                                                   + mergeRev,
+                                                               null,  /*revisionProperties*/
+                                                               null,  /*changelists*/
+                                                               false, /*keepChangelist*/
+                                                               false, /*force*/
+                                                               INFINITY);
+                                if (ci.getNewRevision() < 0)
+                                {
+                                    logger.println("  No changes since the last rebase. This rebase was a no-op.");
+                                    logger_print_build_status(logger, true);
+                                    return 0L;
+                                }
+                                else
+                                {
+                                    logger.println("  committed revision " + ci.getNewRevision());
+                                    logger_print_build_status(logger, true);
+                                    return ci.getNewRevision();
+                                }
+                            }
+                            catch (SVNException e)
+                            {
+                                logger.println("\n!!! SVNException !!!\n");
+                                logger.println(e.getLocalizedMessage());
+                                logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
+                                wc.doRevert(new File[] { mr }, INFINITY, null);
+                                logger_print_build_status(logger, false);
+                                return -1L;
+                            }
+                        }
                     }
-                } catch (SVNException e) {
-                    throw new IOException2("Failed to merge", e);
+                    catch (SVNException e)
+                    {
+                        throw new IOException2("Failed to merge", e);
+                    }
                 }
             }
-        });
+        );
     }
 
     /**
@@ -294,7 +341,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
      * @return
      *      Always non-null. See {@link IntegrationResult}
      */
-    public IntegrationResult integrate(final TaskListener listener, final String branchURL, final long branchRev, final String commitMessage) throws IOException, InterruptedException {
+    public IntegrationResult integrate(final TaskListener listener, final String branchURL, final long branchRev, final String commitMessage) throws IOException, InterruptedException
+    {
         final Long lastIntegrationSourceRevision = getlastIntegrationSourceRevision();
 
         final SubversionSCM svn = (SubversionSCM) getUpstreamProject().getScm();
@@ -302,132 +350,174 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
         final ModuleLocation upstreamLocation = getUpstreamSubversionLocation();
 
-        return owner.getModuleRoot().act(new FileCallable<IntegrationResult>() {
-            public IntegrationResult invoke(File mr, VirtualChannel virtualChannel) throws IOException {
-                try {
-                    final PrintStream logger = listener.getLogger();
-                    final boolean[] foundConflict = new boolean[1];
-                    ISVNEventHandler printHandler = new SubversionEventHandlerImpl(logger,mr) {
-                        @Override
-                        public void handleEvent(SVNEvent event, double progress) throws SVNException {
-                            super.handleEvent(event, progress);
-                            if(event.getContentsStatus()== SVNStatusType.CONFLICTED)
-                                foundConflict[0] = true;
-                        }
-                    };
+        return owner.getModuleRoot().act(
+            new FileCallable<IntegrationResult>()
+            {
+                public IntegrationResult invoke(File mr, VirtualChannel virtualChannel) throws IOException
+                {
+                    try
+                    {
+                        final PrintStream logger = listener.getLogger();
+                        final boolean[] foundConflict = new boolean[1];
+                        ISVNEventHandler printHandler = new SubversionEventHandlerImpl(logger, mr)
+                        {
+                            @Override
+                            public void handleEvent(SVNEvent event, double progress) throws SVNException
+                            {
+                                super.handleEvent(event, progress);
+                                if (event.getContentsStatus() == SVNStatusType.CONFLICTED
+                                    || event.getContentsStatus() == SVNStatusType.CONFLICTED_UNRESOLVED)
+                                {
+                                    foundConflict[0] = true;
+                                }
+                            }
+                        };
 
-                    SvnClientManager svnm = SubversionSCM.createClientManager(provider);
+                        SvnClientManager svnm = SubversionSCM.createClientManager(provider);
 
-                    SVNURL up = upstreamLocation == null ? null : upstreamLocation.getSVNURL();
-                    SVNClientManager cm = svnm.getCore();
-                    cm.setEventHandler(printHandler);
+                        SVNURL up = upstreamLocation.getSVNURL();
+                        SVNURL job_svn_url = svn.getLocations()[0].getSVNURL();
 
-                    // capture the working directory state before the switch
-                    SVNWCClient wc = cm.getWCClient();
-                    SVNInfo wsState = wc.doInfo(mr, null);
-                    SVNURL mergeUrl = branchURL != null ? SVNURL.parseURIDecoded(branchURL) : wsState.getURL();
-                    SVNRevision mergeRev = branchRev >= 0 ? SVNRevision.create(branchRev) : wsState.getRevision();
+                        SVNClientManager cm = svnm.getCore();
+                        SVNUpdateClient uc = cm.getUpdateClient();
+                        cm.setEventHandler(printHandler);
 
-                    // do we have any meaningful changes in this branch worthy of integration?
-                    if (lastIntegrationSourceRevision !=null) {
+                        SVNWCClient wc = cm.getWCClient();
+                        SVNURL mergeUrl = branchURL != null ? SVNURL.parseURIDecoded(branchURL) : job_svn_url;
+                        SVNRevision mergeRev = branchRev >= 0 ? SVNRevision.create(branchRev) : wc.doInfo(job_svn_url, HEAD, HEAD).getCommittedRevision();
+
+                        final MutableLong branch_first_revision = new MutableLong(0);
                         final MutableBoolean changesFound = new MutableBoolean(false);
-                        cm.getLogClient().doLog(new File[]{mr},mergeRev,SVNRevision.create(lastIntegrationSourceRevision),mergeRev,true,false,-1,new ISVNLogEntryHandler() {
-                            public void handleLogEntry(SVNLogEntry e) throws SVNException {
-                                if (!changesFound.booleanValue()) {
-                                    String message = e.getMessage();
 
-                                    if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX)
-                                            && !message.startsWith(IntegrateAction.COMMIT_MESSAGE_PREFIX)) {
-                                        changesFound.setValue(true);
+                        logger.println("Parsing branch log...");
+                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNLogClient.html
+                        cm.getLogClient().doLog(
+                            mergeUrl,
+                            null,     /*paths*/
+                            HEAD,     /*pegRevision*/
+                            HEAD,     /*startRevision*/
+                            SVNRevision.create(0), /*endRevision*/
+                            true,     /*stopOnCopy*/
+                            false,    /*discoverChangedPaths*/
+                            0,        /*limit*/
+                            new ISVNLogEntryHandler()
+                            {
+                                public void handleLogEntry(SVNLogEntry e) throws SVNException
+                                {
+                                    branch_first_revision.setValue(e.getRevision());
+
+                                    if (lastIntegrationSourceRevision != null &&
+                                        !changesFound.booleanValue() &&
+                                         e.getRevision() > lastIntegrationSourceRevision)
+                                    {
+                                        String message = e.getMessage();
+
+                                        if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX)
+                                            && !message.startsWith(IntegrateAction.COMMIT_MESSAGE_PREFIX))
+                                        {
+                                            changesFound.setValue(true);
+                                        }
                                     }
                                 }
                             }
-                        });
-                        // didn't find anything interesting. all the changes are our merges
-                        if (!changesFound.booleanValue()) {
+                        );
+
+                        assert branch_first_revision.longValue() != 0;
+                        logger.println("The first revision of this branch is " + branch_first_revision.longValue());
+
+                        // do we have any meaningful changes in this branch worthy of integration?
+                        if (lastIntegrationSourceRevision != null && !changesFound.booleanValue())
+                        {
+                            // didn't find anything interesting. all the changes are our merges
                             logger.println("No changes to be integrated. Skipping integration.");
                             return new IntegrationResult(0, mergeRev);
                         }
-                    }
 
-                    logger.println("Switching to the upstream (" + up+")");
-                    SVNUpdateClient uc = cm.getUpdateClient();
-                    uc.doSwitch(mr, up, HEAD, HEAD, INFINITY, false, false);
+                        SVNInfo wsState = wc.doInfo(mr, null);
+                        logger.printf("Workspace svn URL is %s\n", wsState.getURL());
 
-                    logger.printf("Merging %s (rev.%s) to the upstream\n", mergeUrl, mergeRev);
-                    SVNDiffClient dc = cm.getDiffClient();
-                    dc.doMergeReIntegrate(
-                            mergeUrl,
-                            mergeRev, mr, false);
-                    SVNCommitInfo ci=null;
-                    if(foundConflict[0]) {
-                        logger.println("\n\n!!! Found conflict with the upstream. Reverting this failed merge !!!\n");
-                        wc.doRevert(new File[]{mr},INFINITY, null);
-                    } else {
-                        logger.println("Committing changes to the upstream");
-                        SVNCommitClient cc = cm.getCommitClient();
-                        ci = cc.doCommit(new File[]{mr}, false, commitMessage+"\n"+mergeUrl+"@"+mergeRev, null, null, false, false, INFINITY);
-                        if(ci.getNewRevision() < 0)
-                            logger.println("  No changes since the last integration");
+                        // workspace must be pointing to the upstream
+                        if (!wsState.getURL().toString().equals(up.toString()))
+                        {
+                            logger.println("Switching to upstream svn URL (" + up + ")");
+                            uc.doSwitch(mr,
+                                        up,
+                                        HEAD,
+                                        HEAD,
+                                        INFINITY,
+                                        false,  /*allowUnversionedObstructions*/
+                                        false); /*depthIsSticky*/
+                        }
                         else
-                            logger.println("  committed revision " + ci.getNewRevision());
-                    }
-
-                    logger.println("Switching back to the branch (" + wsState.getURL() + "@" + wsState.getRevision() + ")");
-                    uc.doSwitch(mr, wsState.getURL(), wsState.getRevision(), wsState.getRevision(), INFINITY, false, false);
-
-                    if(foundConflict[0]) {
-                        logger_print_integration_conflict(logger);
-                        logger_print_build_status(logger, false);
-                        return new IntegrationResult(-1, mergeRev);
-                    }
-
-                    long trunkCommit = ci.getNewRevision();
-
-                    if (trunkCommit >= 0) {
-                        cm.getUpdateClient().doUpdate(mr, HEAD, INFINITY, false, false);
-                        SVNCommitClient cc = cm.getCommitClient();
-
-                        //// taking Jack Repennings advise not to do this.
-
-                        //// if the trunk merge produces a commit M, then we want to do "svn merge --record-only -c M <UpstreamURL>"
-                        //// to convince Subversion not to try to merge rev.M again when re-integrating from the trunk in the future,
-                        //// equivalent of single commit
-                        //SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(trunkCommit-1),
-                                                                  //SVNRevision.create(trunkCommit));
-                        //String msg = "Block the merge commit rev." + trunkCommit + " from getting merged back into our branch";
-                        //logger.println(msg);
-                        //dc.doMerge(up,HEAD,Arrays.asList(r), mr, INFINITY, true/*opposite of --ignore-ancestory in CLI*/, false, false, true);
-
-                        //SVNCommitInfo bci = cc.doCommit(new File[]{mr}, false, msg, null, null, false, false, INFINITY);
-                        //logger.println("  committed revision " + bci.getNewRevision());
-                        //cm.getUpdateClient().doUpdate(mr, HEAD, INFINITY, false, false);
-
-                        // this is the black magic part, but my experiments reveal that we need to run trunk->branch merge --reintegrate
-                        // or else future rebase fails
-                        logger.printf("Merging change from the upstream %s at rev.%s\n", up, trunkCommit);
-                        dc.doMergeReIntegrate(up, SVNRevision.create(trunkCommit), mr, false);
-                        if(foundConflict[0]) {
-                            uc.doSwitch(mr, wsState.getURL(), wsState.getRevision(), wsState.getRevision(), INFINITY, false, false);
-                            logger_print_integration_conflict(logger);
-                            logger_print_build_status(logger, false);
-                            return new IntegrationResult(-1, mergeRev);
+                        {
+                            logger.printf("Updating workspace to the latest revision\n");
+                            uc.doUpdate(mr,
+                                        HEAD,
+                                        INFINITY,
+                                        false,  /*allowUnversionedObstructions*/
+                                        false); /*depthIsSticky*/
                         }
 
-                        String msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing with the integration commit that was just made in rev." + trunkCommit;
-                        SVNCommitInfo bci = cc.doCommit(new File[]{mr}, false, msg, null, null, false, false, INFINITY);
-                        logger.println("  committed revision " + bci.getNewRevision());
+                        wc.doRevert(new File[] { mr }, INFINITY, null);
+                        wsState = wc.doInfo(mr, null);
+                        logger.printf("Workspace revision is %s\n", wsState.getCommittedRevision().toString());
+
+                        logger.printf("Merging %s (rev.%s) to the upstream\n", mergeUrl, mergeRev);
+
+                        SVNDiffClient dc = cm.getDiffClient();
+
+                        SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(branch_first_revision.longValue()), mergeRev);
+                        dc.doMerge(mergeUrl,
+                                   mergeRev,
+                                   Arrays.asList(r),
+                                   mr,
+                                   INFINITY,
+                                   true,   /*useAncestry*/
+                                   false,  /*force*/
+                                   false,  /*dryRun*/
+                                   false); /*recordOnly*/
+
+                        long ret_revision = -1L;
+                        if(foundConflict[0])
+                        {
+                            logger.println("\n\n!!! Found conflict with the upstream. Reverting this failed merge !!!\n");
+                            wc.doRevert(new File[]{mr}, INFINITY, null);
+                        }
+                        else
+                        {
+                            logger.println("Committing changes to the upstream");
+                            SVNCommitClient cc = cm.getCommitClient();
+                            SVNCommitInfo ci = cc.doCommit(new File[]{mr},
+                                                           false, /*keepLocks*/
+                                                           commitMessage+"\n"+mergeUrl+"@"+mergeRev,
+                                                           null,  /*revisionProperties*/
+                                                           null,  /*changelists*/
+                                                           false, /*keepChangelist*/
+                                                           false, /*force*/
+                                                           INFINITY);
+                            if(ci.getNewRevision() < 0)
+                            {
+                                ret_revision = 0L;
+                                logger.println("  No changes since the last integration");
+                            }
+                            else
+                            {
+                                ret_revision = ci.getNewRevision();
+                                logger.println("  committed revision " + ret_revision);
+                            }
+                        }
+
+                        logger_print_build_status(logger, true);
+
+                        return new IntegrationResult(ret_revision, mergeRev);
                     }
-
-                    logger_print_build_status(logger, true);
-
-                    // -1 is returned if there was no commit, so normalize that to 0
-                    return new IntegrationResult(Math.max(0, trunkCommit), mergeRev);
-                } catch (SVNException e) {
-                    throw new IOException2("Failed to merge", e);
+                    catch (SVNException e)
+                    {
+                        throw new IOException2("Failed to merge", e);
+                    }
                 }
             }
-        });
+        );
     }
 
     private Long getlastIntegrationSourceRevision() {

@@ -167,17 +167,20 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
      * @param src
      *      We are taking this revision and merge it into the upstream.
      */
-    public long perform(TaskListener listener, SvnInfo src) throws IOException, InterruptedException {
+    public long perform(TaskListener listener, SvnInfo src) throws IOException, InterruptedException
+    {
         String commitMessage = getCommitMessage();
 
         IntegrationResult r = getProperty().integrate(listener, src.url, src.revision, commitMessage);
         integratedRevision = r.mergeCommit;
         integrationSource = r.integrationSource;
-        if(integratedRevision>0) {
+        if(integratedRevision > 0)
+        {
             // record this integration as a fingerprint.
             // this will allow us to find where this change is integrated.
             Jenkins.getInstance().getFingerprintMap().getOrCreate(
-                    build, IntegrateAction.class.getName(),
+                    build,
+                    IntegrateAction.class.getName(),
                     getFingerprintKey());
         }
         build.save();
