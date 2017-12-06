@@ -57,6 +57,7 @@ import org.apache.commons.lang.mutable.MutableLong;
 import static org.tmatesoft.svn.core.SVNDepth.*;
 import org.tmatesoft.svn.core.wc.SVNConflictChoice;
 import static org.tmatesoft.svn.core.wc.SVNRevision.*;
+import org.tmatesoft.svn.core.wc.SVNRevisionRange;
 
 /**
  * {@link JobProperty} for feature branch projects.
@@ -300,11 +301,18 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         logger.printf("Workspace is %s r%s\n",wsState.getURL().toString() , wsState.getCommittedRevision().toString());
                         logger.println("The rebase will be from " + up + " r" + branch_create_revision.longValue() + " to r" + mergeRev);
 
-                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html#doMergeReIntegrate
-                        dc.doMergeReIntegrate(up,       /*srcURL*/
-                                              SVNRevision.create(branch_create_revision.longValue()), /*pegRevision*/
-                                              mr,       /*dstPath*/
-                                              false);   /*dryRun*/
+                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
+                        SVNRevision svn_rebase_rev_from = SVNRevision.create(branch_create_revision.longValue());
+                        SVNRevisionRange r = new SVNRevisionRange(svn_rebase_rev_from, mergeRev);
+                        dc.doMerge(up,
+                                   svn_rebase_rev_from, /*pegRevision*/
+                                   Arrays.asList(r),
+                                   mr,
+                                   INFINITY,
+                                   true,   /*useAncestry*/
+                                   true,   /*force*/
+                                   false,  /*dryRun*/
+                                   false); /*recordOnly*/
 
                         if(foundConflict[0])
                         {
@@ -546,7 +554,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         SVNDiffClient dc = cm.getDiffClient();
 
-                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html#doMergeReIntegrate
+                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
                         dc.doMergeReIntegrate(mergeUrl, /*srcURL*/
                                               SVNRevision.create(integrate_from), /*pegRevision*/
                                               mr,       /*dstPath*/
