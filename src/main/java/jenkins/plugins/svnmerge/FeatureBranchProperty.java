@@ -208,7 +208,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         final MutableLong branch_create_revision = new MutableLong(0);
 
-                        logger.println("Parsing branch log...");
+                        logger.println("Parsing branch log...\n");
+
                         // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNLogClient.html
                         cm.getLogClient().doLog(
                             job_svn_url,
@@ -248,6 +249,14 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             }
                         );
 
+                        SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
+                        if (mergeRev.getNumber() <= branch_create_revision.longValue())
+                        {
+                            logger.println("  No new commits since the last rebase. This rebase was a no-op.");
+                            logger_print_build_status(logger, true);
+                            return 0L;
+                        }
+
                         logger.printf("Workspace svn URL is %s\n", wsState.getURL());
 
                         logger.println("Cleaning workspace...");
@@ -280,20 +289,14 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         wsState = wc.doInfo(mr, null);
                         logger.printf("Workspace revision is %s\n", wsState.getCommittedRevision().toString());
 
-                        SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
-
                         logger.println("The rebase will be from upstream r" + branch_create_revision.longValue() + "+1 to r" + mergeRev);
 
-                        SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(branch_create_revision.longValue()+1), mergeRev);
-                        dc.doMerge(up,
-                                   mergeRev,
-                                   Arrays.asList(r),
-                                   mr,
-                                   INFINITY,
-                                   true,   /*useAncestry*/
-                                   false,  /*force*/
-                                   false,  /*dryRun*/
-                                   false); /*recordOnly*/
+                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html#doMergeReIntegrate
+                        dc.doMergeReIntegrate(up,       /*srcURL*/
+                                              mergeRev, /*pegRevision*/
+                                              mr,       /*dstPath*/
+                                              false);   /*dryRun*/
+
                         if(foundConflict[0])
                         {
                             logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
@@ -440,7 +443,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         final MutableLong branch_first_revision = new MutableLong(0);
                         final MutableBoolean changesFound = new MutableBoolean(false);
 
-                        logger.println("Parsing branch log...");
+                        logger.println("Parsing branch log...\n");
+
                         // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNLogClient.html
                         cm.getLogClient().doLog(
                             mergeUrl,
@@ -520,16 +524,22 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         SVNDiffClient dc = cm.getDiffClient();
 
-                        SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(branch_first_revision.longValue()), mergeRev);
-                        dc.doMerge(mergeUrl,
-                                   mergeRev,
-                                   Arrays.asList(r),
-                                   mr,
-                                   INFINITY,
-                                   true,   /*useAncestry*/
-                                   false,  /*force*/
-                                   false,  /*dryRun*/
-                                   false); /*recordOnly*/
+                        //SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(branch_first_revision.longValue()), mergeRev);
+                        //dc.doMerge(mergeUrl,
+                                   //mergeRev,
+                                   //Arrays.asList(r),
+                                   //mr,
+                                   //INFINITY,
+                                   //true,   /*useAncestry*/
+                                   //true,   /*force*/
+                                   //false,  /*dryRun*/
+                                   //false); /*recordOnly*/
+
+                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html#doMergeReIntegrate
+                        dc.doMergeReIntegrate(mergeUrl, /*srcURL*/
+                                              mergeRev, /*pegRevision*/
+                                              mr,       /*dstPath*/
+                                              false);   /*dryRun*/
 
                         long ret_revision = -1L;
                         if(foundConflict[0])
