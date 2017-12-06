@@ -51,6 +51,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.apache.commons.lang.mutable.MutableLong;
 
 import static org.tmatesoft.svn.core.SVNDepth.*;
@@ -204,6 +206,48 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         SVNInfo wsState = wc.doInfo(mr, null);
                         SVNDiffClient dc = cm.getDiffClient();
 
+                        final MutableLong branch_create_revision = new MutableLong(0);
+
+                        logger.println("Parsing branch log...");
+                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNLogClient.html
+                        cm.getLogClient().doLog(
+                            job_svn_url,
+                            null,     /*paths*/
+                            HEAD,     /*pegRevision*/
+                            HEAD,     /*startRevision*/
+                            SVNRevision.create(0), /*endRevision*/
+                            true,     /*stopOnCopy*/
+                            false,    /*discoverChangedPaths*/
+                            0,        /*limit*/
+                            new ISVNLogEntryHandler()
+                            {
+                                final Pattern pattern_rebase = Pattern.compile("\\[REBASE\\].+@(\\d+)");
+                                final Pattern pattern_create = Pattern.compile("\\[CREATE\\].+\\?r=(\\d+)");
+                                Matcher matcher;
+                                public void handleLogEntry(SVNLogEntry e) throws SVNException
+                                {
+                                    if (0 == branch_create_revision.longValue())
+                                    {
+                                        matcher = pattern_rebase.matcher(e.getMessage());
+                                        if (matcher.find())
+                                        {
+                                            logger.println("Found a rebase at r" + e.getRevision() + " - upstream r" + matcher.group(1));
+                                            branch_create_revision.setValue(Long.parseLong(matcher.group(1)));
+                                        }
+                                        else
+                                        {
+                                            matcher = pattern_create.matcher(e.getMessage());
+                                            if (matcher.find())
+                                            {
+                                                logger.println("Found the create at r" + e.getRevision() + " - upstream r" + matcher.group(1));
+                                                branch_create_revision.setValue(Long.parseLong(matcher.group(1)));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        );
+
                         logger.printf("Workspace svn URL is %s\n", wsState.getURL());
 
                         logger.println("Cleaning workspace...");
@@ -238,8 +282,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
 
-                        logger.printf("Merging change from the upstream %s at rev.%s\n", up, mergeRev);
-                        SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(0), mergeRev);
+                        logger.println("The rebase will be from upstream r" + branch_create_revision.longValue() + "+1 to r" + mergeRev);
+
+                        SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(branch_create_revision.longValue()+1), mergeRev);
                         dc.doMerge(up,
                                    mergeRev,
                                    Arrays.asList(r),
