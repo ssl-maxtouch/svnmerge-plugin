@@ -200,12 +200,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         SVNURL job_svn_url = svn.getLocations()[0].getSVNURL();
 
                         SVNClientManager cm = svnm.getCore();
-                        SVNUpdateClient uc = cm.getUpdateClient();
                         cm.setEventHandler(printHandler);
 
                         SVNWCClient wc = cm.getWCClient();
-                        SVNInfo wsState = wc.doInfo(mr, null);
-                        SVNDiffClient dc = cm.getDiffClient();
 
                         final MutableLong branch_create_revision = new MutableLong(0);
 
@@ -258,66 +255,16 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             return 0L;
                         }
 
-                        logger.printf("Workspace svn URL is %s\n", wsState.getURL());
+                        prepare_workspace(mr, job_svn_url, cm, logger);
 
-                        logger.println("Cleaning workspace...");
-                        wc.doResolve(mr, INFINITY, SVNConflictChoice.BASE);
-                        wc.doRevert(new File[] { mr }, INFINITY, null);
-                        wc.doCleanup(mr);
+                        assert (!foundConflict[0]);
 
-                        if (!wsState.getURL().toString().equals(job_svn_url.toString()))
-                        {
-                            logger.println("Switching to job svn URL (" + job_svn_url + ")");
-                            uc.doSwitch(mr,
-                                        job_svn_url,
-                                        HEAD,
-                                        HEAD,
-                                        INFINITY,
-                                        false,  /*allowUnversionedObstructions*/
-                                        false); /*depthIsSticky*/
-                        }
-                        else
-                        {
-                            final long curr_rev = wc.doInfo(mr, null).getCommittedRevision().getNumber();
-                            final long head_rev = wc.doInfo(job_svn_url, HEAD, HEAD).getCommittedRevision().getNumber();
-                            logger.printf("Branch workspace is r%s\n", curr_rev);
-                            logger.printf("Branch HEAD is r%s\n", head_rev);
-                            if (curr_rev == head_rev)
-                            {
-                                logger.printf("Workspace already to the latest revision\n");
-                            }
-                            else
-                            {
-                                logger.printf("Updating workspace to the latest revision\n");
-                                uc.doUpdate(mr,
-                                            HEAD,
-                                            INFINITY,
-                                            false,  /*allowUnversionedObstructions*/
-                                            false); /*depthIsSticky*/
-                            }
-                        }
-
-                        wsState = wc.doInfo(mr, null);
-                        logger.printf("Workspace is %s r%s\n",wsState.getURL().toString() , wsState.getCommittedRevision().toString());
-                        logger.println("The rebase will be from " + up + " r" + branch_create_revision.longValue() + " to r" + mergeRev);
-
-                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
-                        SVNRevision svn_rebase_rev_from = SVNRevision.create(branch_create_revision.longValue());
-                        SVNRevisionRange r = new SVNRevisionRange(svn_rebase_rev_from, mergeRev);
-                        dc.doMerge(up,
-                                   svn_rebase_rev_from, /*pegRevision*/
-                                   Arrays.asList(r),
-                                   mr,
-                                   INFINITY,
-                                   true,   /*useAncestry*/
-                                   true,   /*force*/
-                                   false,  /*dryRun*/
-                                   false); /*recordOnly*/
+                        final long rebase_from = branch_create_revision.longValue();
+                        execute_merge(mr, up, rebase_from, mergeRev, cm, logger);
 
                         if(foundConflict[0])
                         {
-                            logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
-                            wc.doRevert(new File[] { mr }, INFINITY, null);
+                            logger_print_rebase_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
                             logger_print_build_status(logger, false);
                             return -1L;
                         }
@@ -354,8 +301,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             {
                                 logger.println("\n!!! SVNException !!!\n");
                                 logger.println(e.getLocalizedMessage());
-                                logger_print_rebase_conflict(logger, wsState.getURL().toString(), up.toString());
-                                wc.doRevert(new File[] { mr }, INFINITY, null);
+                                logger_print_rebase_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
                                 logger_print_build_status(logger, false);
                                 return -1L;
                             }
@@ -411,8 +357,11 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
      * @param branchRev
      *      Revision of the branch to be integrated to the upstream.
      *      If -1, use the current workspace revision.
+     * @param commitMessage
      * @return
      *      Always non-null. See {@link IntegrationResult}
+     * @throws java.io.IOException
+     * @throws java.lang.InterruptedException
      */
     public IntegrationResult integrate(final TaskListener listener, final String branchURL, final long branchRev, final String commitMessage) throws IOException, InterruptedException
     {
@@ -452,7 +401,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         SVNURL job_svn_url = svn.getLocations()[0].getSVNURL();
 
                         SVNClientManager cm = svnm.getCore();
-                        SVNUpdateClient uc = cm.getUpdateClient();
                         cm.setEventHandler(printHandler);
 
                         SVNWCClient wc = cm.getWCClient();
@@ -506,65 +454,17 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             return new IntegrationResult(0, mergeRev);
                         }
 
-                        SVNInfo wsState = wc.doInfo(mr, null);
-                        logger.printf("Workspace svn URL is %s\n", wsState.getURL());
+                        prepare_workspace(mr, up, cm, logger);
 
-                        logger.println("Cleaning workspace...");
-                        wc.doResolve(mr, INFINITY, SVNConflictChoice.BASE);
-                        wc.doRevert(new File[] { mr }, INFINITY, null);
-                        wc.doCleanup(mr);
+                        assert (!foundConflict[0]);
 
-                        // workspace must be pointing to the upstream
-                        if (!wsState.getURL().toString().equals(up.toString()))
-                        {
-                            logger.println("Switching to upstream svn URL (" + up + ")");
-                            uc.doSwitch(mr,
-                                        up,
-                                        HEAD,
-                                        HEAD,
-                                        INFINITY,
-                                        false,  /*allowUnversionedObstructions*/
-                                        false); /*depthIsSticky*/
-                        }
-                        else
-                        {
-                            final long curr_rev = wc.doInfo(mr, null).getCommittedRevision().getNumber();
-                            final long head_rev = wc.doInfo(up, HEAD, HEAD).getCommittedRevision().getNumber();
-                            logger.printf("Upstream workspace is r%s\n", curr_rev);
-                            logger.printf("Upstream HEAD is r%s\n", head_rev);
-                            if (curr_rev == head_rev)
-                            {
-                                logger.printf("Workspace already to the latest revision\n");
-                            }
-                            else
-                            {
-                                logger.printf("Updating workspace to the latest revision\n");
-                                uc.doUpdate(mr,
-                                            HEAD,
-                                            INFINITY,
-                                            false,  /*allowUnversionedObstructions*/
-                                            false); /*depthIsSticky*/
-                            }
-                        }
-
-                        wsState = wc.doInfo(mr, null);
                         final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : branch_first_revision.longValue();
-                        logger.printf("Workspace is %s r%s\n", wsState.getURL().toString(), wsState.getCommittedRevision().toString());
-                        logger.printf("The integrate will be from " + mergeUrl + " r" + integrate_from + " to r" + mergeRev);
-
-                        SVNDiffClient dc = cm.getDiffClient();
-
-                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
-                        dc.doMergeReIntegrate(mergeUrl, /*srcURL*/
-                                              SVNRevision.create(integrate_from), /*pegRevision*/
-                                              mr,       /*dstPath*/
-                                              false);   /*dryRun*/
+                        execute_merge(mr, mergeUrl, integrate_from, mergeRev, cm, logger);
 
                         long ret_revision = -1L;
-                        if(foundConflict[0])
+                        if (foundConflict[0])
                         {
-                            logger.println("\n\n!!! Found conflict with the upstream. Reverting this failed merge !!!\n");
-                            wc.doRevert(new File[] { mr }, INFINITY, null);
+                            logger.println("\n\n!!! Found conflict with the upstream !!!\n");
                         }
                         else
                         {
@@ -596,7 +496,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                     }
                     catch (SVNException e)
                     {
-                        throw new IOException2("Failed to merge", e);
+                        throw new IOException("Failed to merge", e);
                     }
                 }
             }
@@ -661,9 +561,84 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
     private static final Logger LOGGER = Logger.getLogger(FeatureBranchProperty.class.getName());
 
+    private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        logger.println("The merge will be from " + mergeUrl + " r" + merge_from + " to r" + mergeRev);
+
+        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
+        final boolean USE_REINTEGRATE = false;
+        if (USE_REINTEGRATE)
+        {
+            cm.getDiffClient().doMergeReIntegrate(mergeUrl,
+                                                  mergeRev,
+                                                  mr,      /*dstPath*/
+                                                  false);  /*dryRun*/
+        }
+        else
+        {
+            final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from), mergeRev);
+            cm.getDiffClient().doMerge(mergeUrl,
+                                       SVNRevision.create(merge_from), /*pegRevision*/
+                                       Arrays.asList(r),
+                                       mr,
+                                       INFINITY,
+                                       true,   /*useAncestry*/
+                                       true,   /*force*/
+                                       false,  /*dryRun*/
+                                       false); /*recordOnly*/
+        }
+    }
+
+    private void prepare_workspace(final File mr, final SVNURL target_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        final SVNUpdateClient uc = cm.getUpdateClient();
+        final SVNWCClient wc = cm.getWCClient();
+
+        logger.println("Cleaning workspace of agent " + System.getenv("COMPUTERNAME") + " - " + mr);
+
+        wc.doRevert(new File[] { mr }, INFINITY, null);
+        wc.doCleanup(mr);
+
+        logger.printf("Workspace svn URL is %s\n", wc.doInfo(mr, null).getURL());
+        if (!wc.doInfo(mr, null).getURL().toString().equals(target_svn_url.toString()))
+        {
+            logger.println("Switching to target svn URL (" + target_svn_url + ")");
+            uc.doSwitch(mr,
+                        target_svn_url,
+                        HEAD,
+                        HEAD,
+                        INFINITY,
+                        false,  /*allowUnversionedObstructions*/
+                        false); /*depthIsSticky*/
+        }
+        else
+        {
+            final long curr_rev = wc.doInfo(mr, null).getCommittedRevision().getNumber();
+            final long head_rev = wc.doInfo(target_svn_url, HEAD, HEAD).getCommittedRevision().getNumber();
+            logger.printf("Workspace is r%s\n", curr_rev);
+            logger.printf("HEAD is r%s\n", head_rev);
+            if (curr_rev == head_rev)
+            {
+                logger.printf("Workspace already to the latest revision\n");
+            }
+            else
+            {
+                logger.printf("Updating workspace to the latest revision\n");
+                uc.doUpdate(mr,
+                            HEAD,
+                            INFINITY,
+                            false,  /*allowUnversionedObstructions*/
+                            false); /*depthIsSticky*/
+            }
+        }
+
+        final SVNInfo wsState = wc.doInfo(mr, null);
+        logger.printf("Workspace is %s r%s\n", wsState.getURL().toString() , wsState.getCommittedRevision().toString());
+    }
+
     private void logger_print_rebase_conflict(final PrintStream logger, final String devbranch_URL, final String upstream_URL)
     {
-        logger.println("\n\n!!! Found conflict. Reverting this failed merge !!!\n");
+        logger.println("\n\n!!! Found conflict !!!\n");
         logger.printf( "- Checkout (or Update) %s\n", devbranch_URL);
         logger.println("- Right click -> TortoiseSVN -> Merge");
         logger.println("  - select 'Merge a range of revisions'");
