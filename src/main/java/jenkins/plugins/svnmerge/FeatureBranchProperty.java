@@ -21,7 +21,6 @@ import hudson.util.IOException2;
 import jenkins.model.Jenkins;
 import net.sf.json.JSONObject;
 
-import org.apache.commons.lang.mutable.MutableBoolean;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.StaplerRequest;
 import org.tmatesoft.svn.core.ISVNLogEntryHandler;
@@ -33,7 +32,6 @@ import org.tmatesoft.svn.core.auth.ISVNAuthenticationProvider;
 import org.tmatesoft.svn.core.wc.ISVNEventHandler;
 import org.tmatesoft.svn.core.wc.SVNClientManager;
 import org.tmatesoft.svn.core.wc.SVNCommitClient;
-import org.tmatesoft.svn.core.wc.SVNDiffClient;
 import org.tmatesoft.svn.core.wc.SVNEvent;
 import org.tmatesoft.svn.core.wc.SVNInfo;
 import org.tmatesoft.svn.core.wc.SVNRevision;
@@ -55,7 +53,6 @@ import java.util.regex.Pattern;
 import org.apache.commons.lang.mutable.MutableLong;
 
 import static org.tmatesoft.svn.core.SVNDepth.*;
-import org.tmatesoft.svn.core.wc.SVNConflictChoice;
 import static org.tmatesoft.svn.core.wc.SVNRevision.*;
 import org.tmatesoft.svn.core.wc.SVNRevisionRange;
 
@@ -204,51 +201,11 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         SVNWCClient wc = cm.getWCClient();
 
-                        final MutableLong branch_create_revision = new MutableLong(0);
-
-                        logger.println("Parsing branch log...");
-
-                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNLogClient.html
-                        cm.getLogClient().doLog(
-                            job_svn_url,
-                            null,     /*paths*/
-                            HEAD,     /*pegRevision*/
-                            HEAD,     /*startRevision*/
-                            SVNRevision.create(0), /*endRevision*/
-                            true,     /*stopOnCopy*/
-                            false,    /*discoverChangedPaths*/
-                            0,        /*limit*/
-                            new ISVNLogEntryHandler()
-                            {
-                                final Pattern pattern_rebase = Pattern.compile("\\[REBASE\\].+@(\\d+)");
-                                final Pattern pattern_create = Pattern.compile("\\[CREATE\\].+\\?r=(\\d+)");
-                                Matcher matcher;
-                                public void handleLogEntry(SVNLogEntry e) throws SVNException
-                                {
-                                    if (0 == branch_create_revision.longValue())
-                                    {
-                                        matcher = pattern_rebase.matcher(e.getMessage());
-                                        if (matcher.find())
-                                        {
-                                            logger.println("Found a rebase at r" + e.getRevision() + " - upstream r" + matcher.group(1));
-                                            branch_create_revision.setValue(Long.parseLong(matcher.group(1)));
-                                        }
-                                        else
-                                        {
-                                            matcher = pattern_create.matcher(e.getMessage());
-                                            if (matcher.find())
-                                            {
-                                                logger.println("Found the create at r" + e.getRevision() + " - upstream r" + matcher.group(1));
-                                                branch_create_revision.setValue(Long.parseLong(matcher.group(1)));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        );
+                        final long[] create_n_last_rebase = parse_branch_log(job_svn_url, cm, logger);
+                        final long create_or_last_rebase = create_n_last_rebase[1] > 0 ? create_n_last_rebase[1] : create_n_last_rebase[0];
 
                         SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
-                        if (mergeRev.getNumber() <= branch_create_revision.longValue())
+                        if (mergeRev.getNumber() <= create_or_last_rebase)
                         {
                             logger.println("  No new commits since the last rebase. This rebase was a no-op.");
                             logger_print_build_status(logger, true);
@@ -259,10 +216,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         assert (!foundConflict[0]);
 
-                        final long rebase_from = branch_create_revision.longValue();
                         execute_merge(mr,
                                       up,
-                                      rebase_from,
+                                      create_or_last_rebase,
                                       mergeRev,
                                       cm,
                                       logger);
@@ -410,60 +366,18 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         SVNWCClient wc = cm.getWCClient();
                         SVNURL mergeUrl = branchURL != null ? SVNURL.parseURIDecoded(branchURL) : job_svn_url;
-                        SVNRevision mergeRev = branchRev >= 0 ? SVNRevision.create(branchRev) : wc.doInfo(job_svn_url, HEAD, HEAD).getCommittedRevision();
+                        SVNRevision mergeRev = branchRev >= 0 ? SVNRevision.create(branchRev) : wc.doInfo(mergeUrl, HEAD, HEAD).getCommittedRevision();
 
-                        final MutableLong branch_first_revision = new MutableLong(0);
-                        final MutableBoolean changesFound = new MutableBoolean(false);
+                        final long[] create_n_last_rebase = parse_branch_log(mergeUrl, cm, logger);
+                        final long create_or_last_rebase = create_n_last_rebase[1] > 0 ? create_n_last_rebase[1] : create_n_last_rebase[0];
 
-                        logger.println("Parsing branch log...");
-
-                        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNLogClient.html
-                        cm.getLogClient().doLog(
-                            mergeUrl,
-                            null,     /*paths*/
-                            HEAD,     /*pegRevision*/
-                            HEAD,     /*startRevision*/
-                            SVNRevision.create(0), /*endRevision*/
-                            true,     /*stopOnCopy*/
-                            false,    /*discoverChangedPaths*/
-                            0,        /*limit*/
-                            new ISVNLogEntryHandler()
-                            {
-                                public void handleLogEntry(SVNLogEntry e) throws SVNException
-                                {
-                                    branch_first_revision.setValue(e.getRevision());
-
-                                    if (lastIntegrationSourceRevision != null &&
-                                        !changesFound.booleanValue() &&
-                                         e.getRevision() > lastIntegrationSourceRevision)
-                                    {
-                                        String message = e.getMessage();
-
-                                        if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX)
-                                            && !message.startsWith(IntegrateAction.COMMIT_MESSAGE_PREFIX))
-                                        {
-                                            changesFound.setValue(true);
-                                        }
-                                    }
-                                }
-                            }
-                        );
-
-                        logger.println("The first revision of this branch is " + branch_first_revision.longValue());
-
-                        // do we have any meaningful changes in this branch worthy of integration?
-                        if (lastIntegrationSourceRevision != null && !changesFound.booleanValue())
-                        {
-                            // didn't find anything interesting. all the changes are our merges
-                            logger.println("No changes to be integrated. Skipping integration.");
-                            return new IntegrationResult(0, mergeRev);
-                        }
+                        logger.println("The first revision of this branch is " + create_n_last_rebase[0]);
 
                         prepare_workspace(mr, up, cm, logger);
 
                         assert (!foundConflict[0]);
 
-                        final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : branch_first_revision.longValue();
+                        final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : create_n_last_rebase[0];
                         execute_merge(mr,
                                       mergeUrl,
                                       integrate_from,
@@ -471,7 +385,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       cm,
                                       logger);
 
-                        long ret_revision = -1L;
+                        long trunkCommit = -1L;
                         if (foundConflict[0])
                         {
                             logger.println("\n\n!!! Found conflict with the upstream !!!\n");
@@ -490,19 +404,53 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                                            INFINITY);
                             if(ci.getNewRevision() < 0)
                             {
-                                ret_revision = 0L;
+                                trunkCommit = 0L;
                                 logger.println("  No changes since the last integration");
                             }
                             else
                             {
-                                ret_revision = ci.getNewRevision();
-                                logger.println("  committed revision " + ret_revision);
+                                trunkCommit = ci.getNewRevision();
+                                logger.println("  committed revision " + trunkCommit);
+
+                                logger.println("\nSwitching back to branch\n");
+                                cm.getUpdateClient().doSwitch(mr,
+                                                              mergeUrl,
+                                                              HEAD,
+                                                              HEAD,
+                                                              INFINITY,
+                                                              true,   /*allowUnversionedObstructions*/
+                                                              false); /*depthIsSticky*/
+
+                                execute_merge(mr,
+                                              up,
+                                              create_or_last_rebase,
+                                              SVNRevision.create(trunkCommit),
+                                              cm,
+                                              logger);
+
+                                if(foundConflict[0])
+                                {
+                                    logger.println("Conflict found. Please sync with the upstream to resolve this error.");
+                                    return new IntegrationResult(-1, mergeRev);
+                                }
+
+                                SVNCommitInfo bci = cc.doCommit(new File[] { mr },
+                                                                false, /*keepLocks*/
+                                                                RebaseAction.COMMIT_MESSAGE_PREFIX
+                                                                   + "Rebasing from our integrate to " + up + "@"
+                                                                   + trunkCommit,
+                                                                null,  /*revisionProperties*/
+                                                                null,  /*changelists*/
+                                                                false, /*keepChangelist*/
+                                                                false, /*force*/
+                                                                INFINITY);
+                                logger.println("  committed revision " + bci.getNewRevision());
                             }
                         }
 
                         logger_print_build_status(logger, true);
 
-                        return new IntegrationResult(ret_revision, mergeRev);
+                        return new IntegrationResult(trunkCommit, mergeRev);
                     }
                     catch (SVNException e)
                     {
@@ -570,6 +518,52 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
     }
 
     private static final Logger LOGGER = Logger.getLogger(FeatureBranchProperty.class.getName());
+
+    private long[] parse_branch_log(final SVNURL branch_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        final MutableLong branch_create_revision = new MutableLong(0);
+        final MutableLong branch_last_rebase_revision = new MutableLong(0);
+
+        logger.println("Parsing log of " + branch_svn_url);
+
+        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNLogClient.html
+        cm.getLogClient().doLog(
+            branch_svn_url,
+            null,     /*paths*/
+            HEAD,     /*pegRevision*/
+            HEAD,     /*startRevision*/
+            SVNRevision.create(0), /*endRevision*/
+            true,     /*stopOnCopy*/
+            false,    /*discoverChangedPaths*/
+            0,        /*limit*/
+            new ISVNLogEntryHandler()
+            {
+                final Pattern pattern_rebase = Pattern.compile("\\[REBASE\\].+@(\\d+)");
+                final Pattern pattern_create = Pattern.compile("\\[CREATE\\].+\\?r=(\\d+)");
+                Matcher matcher;
+                public void handleLogEntry(SVNLogEntry e) throws SVNException
+                {
+                    matcher = pattern_create.matcher(e.getMessage());
+                    if (matcher.find())
+                    {
+                        logger.println("Found the create at r" + e.getRevision() + " - upstream r" + matcher.group(1));
+                        branch_create_revision.setValue(Long.parseLong(matcher.group(1)));
+                    }
+                    else if (0 == branch_last_rebase_revision.longValue())
+                    {
+                        matcher = pattern_rebase.matcher(e.getMessage());
+                        if (matcher.find())
+                        {
+                            logger.println("Found a rebase at r" + e.getRevision() + " - upstream r" + matcher.group(1));
+                            branch_last_rebase_revision.setValue(Long.parseLong(matcher.group(1)));
+                        }
+                    }
+                }
+            }
+        );
+        long[] ret_array = {branch_create_revision.longValue(), branch_last_rebase_revision.longValue()};
+        return ret_array;
+    }
 
     private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
