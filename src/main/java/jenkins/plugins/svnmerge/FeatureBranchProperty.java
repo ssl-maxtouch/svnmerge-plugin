@@ -265,8 +265,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       rebase_from,
                                       mergeRev,
                                       cm,
-                                      logger,
-                                      true); /*use_reintegrate*/
+                                      logger);
 
                         if(foundConflict[0])
                         {
@@ -470,8 +469,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       integrate_from,
                                       mergeRev,
                                       cm,
-                                      logger,
-                                      true); /*use_reintegrate*/
+                                      logger);
 
                         long ret_revision = -1L;
                         if (foundConflict[0])
@@ -573,30 +571,21 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
     private static final Logger LOGGER = Logger.getLogger(FeatureBranchProperty.class.getName());
 
-    private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger, final boolean use_reintegrate) throws SVNException
+    private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
         // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
-        logger.println("The merge will be from " + mergeUrl + " r" + merge_from + " to r" + mergeRev);
-        if (use_reintegrate)
-        {
-            cm.getDiffClient().doMergeReIntegrate(mergeUrl,
-                                                  mergeRev,
-                                                  mr,      /*dstPath*/
-                                                  false);  /*dryRun*/
-        }
-        else
-        {
-            final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from), mergeRev);
-            cm.getDiffClient().doMerge(mergeUrl,
-                                       SVNRevision.create(merge_from), /*pegRevision*/
-                                       Arrays.asList(r),
-                                       mr,
-                                       INFINITY,
-                                       true,   /*useAncestry*/
-                                       true,   /*force*/
-                                       false,  /*dryRun*/
-                                       false); /*recordOnly*/
-        }
+        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from + " to r" + mergeRev);
+
+        final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from), mergeRev);
+        cm.getDiffClient().doMerge(mergeUrl,
+                                   SVNRevision.create(merge_from), /*pegRevision*/
+                                   Arrays.asList(r),
+                                   mr,
+                                   INFINITY,
+                                   true,   /*useAncestry*/
+                                   true,   /*force*/
+                                   false,  /*dryRun*/
+                                   false); /*recordOnly*/
     }
 
     private void prepare_workspace(final File mr, final SVNURL target_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
@@ -618,7 +607,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         HEAD,
                         HEAD,
                         INFINITY,
-                        false,  /*allowUnversionedObstructions*/
+                        true,  /*allowUnversionedObstructions*/
                         false); /*depthIsSticky*/
         }
         else
@@ -637,7 +626,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                 uc.doUpdate(mr,
                             HEAD,
                             INFINITY,
-                            false,  /*allowUnversionedObstructions*/
+                            true,  /*allowUnversionedObstructions*/
                             false); /*depthIsSticky*/
             }
         }
