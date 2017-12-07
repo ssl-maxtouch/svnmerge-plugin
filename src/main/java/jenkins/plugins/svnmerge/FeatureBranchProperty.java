@@ -260,7 +260,13 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         assert (!foundConflict[0]);
 
                         final long rebase_from = branch_create_revision.longValue();
-                        execute_merge(mr, up, rebase_from, mergeRev, cm, logger);
+                        execute_merge(mr,
+                                      up,
+                                      rebase_from,
+                                      mergeRev,
+                                      cm,
+                                      logger,
+                                      true); /*use_reintegrate*/
 
                         if(foundConflict[0])
                         {
@@ -459,7 +465,13 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         assert (!foundConflict[0]);
 
                         final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : branch_first_revision.longValue();
-                        execute_merge(mr, mergeUrl, integrate_from, mergeRev, cm, logger);
+                        execute_merge(mr,
+                                      mergeUrl,
+                                      integrate_from,
+                                      mergeRev,
+                                      cm,
+                                      logger,
+                                      true); /*use_reintegrate*/
 
                         long ret_revision = -1L;
                         if (foundConflict[0])
@@ -561,13 +573,11 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
     private static final Logger LOGGER = Logger.getLogger(FeatureBranchProperty.class.getName());
 
-    private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger, final boolean use_reintegrate) throws SVNException
     {
-        logger.println("The merge will be from " + mergeUrl + " r" + merge_from + " to r" + mergeRev);
-
         // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
-        final boolean USE_REINTEGRATE = false;
-        if (USE_REINTEGRATE)
+        logger.println("The merge will be from " + mergeUrl + " r" + merge_from + " to r" + mergeRev);
+        if (use_reintegrate)
         {
             cm.getDiffClient().doMergeReIntegrate(mergeUrl,
                                                   mergeRev,
