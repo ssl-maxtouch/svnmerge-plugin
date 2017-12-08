@@ -50,9 +50,11 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.apache.commons.lang.mutable.MutableBoolean;
 import org.apache.commons.lang.mutable.MutableLong;
 
 import static org.tmatesoft.svn.core.SVNDepth.*;
+import org.tmatesoft.svn.core.wc.SVNDiffClient;
 import static org.tmatesoft.svn.core.wc.SVNRevision.*;
 import org.tmatesoft.svn.core.wc.SVNRevisionRange;
 
@@ -233,18 +235,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         {
                             try
                             {
-                                logger.println("Committing changes");
-                                SVNCommitClient cc = cm.getCommitClient();
-                                SVNCommitInfo ci = cc.doCommit(new File[] { mr },
-                                                               false, /*keepLocks*/
-                                                               RebaseAction.COMMIT_MESSAGE_PREFIX
-                                                                   + "Rebasing from " + up + "@"
-                                                                   + mergeRev,
-                                                               null,  /*revisionProperties*/
-                                                               null,  /*changelists*/
-                                                               false, /*keepChangelist*/
-                                                               false, /*force*/
-                                                               INFINITY);
+                                final String commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from " + up + "@" + mergeRev;
+                                SVNCommitInfo ci = execute_commit(mr, commit_msg, cm, logger);
                                 if (ci.getNewRevision() < 0)
                                 {
                                     logger.println("  No changes since the last rebase. This rebase was a no-op.");
@@ -368,6 +360,42 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         SVNURL mergeUrl = branchURL != null ? SVNURL.parseURIDecoded(branchURL) : job_svn_url;
                         SVNRevision mergeRev = branchRev >= 0 ? SVNRevision.create(branchRev) : wc.doInfo(mergeUrl, HEAD, HEAD).getCommittedRevision();
 
+                        // do we have any meaningful changes in this branch worthy of integration?
+                        if (lastIntegrationSourceRevision != null)
+                        {
+                            final MutableBoolean changesFound = new MutableBoolean(false);
+                            logger.println("Check for changes after our last integration of r" + lastIntegrationSourceRevision);
+                            cm.getLogClient().doLog(mergeUrl,
+                                                    null,     /*paths*/
+                                                    mergeRev, /*pegRevision*/
+                                                    mergeRev, /*startRevision*/
+                                                    SVNRevision.create(lastIntegrationSourceRevision), /*endRevision*/
+                                                    true,     /*stopOnCopy*/
+                                                    false,    /*discoverChangedPaths*/
+                                                    0,        /*limit*/
+                                                    new ISVNLogEntryHandler()
+                            {
+                                public void handleLogEntry(SVNLogEntry e) throws SVNException
+                                {
+                                    if (!changesFound.booleanValue())
+                                    {
+                                        String message = e.getMessage();
+                                        if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX))
+                                        {
+                                            logger.println("Found at least a commit to be integrated: " + message);
+                                            changesFound.setValue(true);
+                                        }
+                                    }
+                                }
+                            });
+                            // didn't find anything interesting. all the changes are our merges
+                            if (!changesFound.booleanValue())
+                            {
+                                logger.println("No changes to be integrated. Skipping integration.");
+                                return new IntegrationResult(0, mergeRev);
+                            }
+                        }
+
                         final long[] create_n_last_rebase = parse_branch_log(mergeUrl, cm, logger);
                         final long create_or_last_rebase = create_n_last_rebase[1] > 0 ? create_n_last_rebase[1] : create_n_last_rebase[0];
 
@@ -392,16 +420,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         }
                         else
                         {
-                            logger.println("Committing changes to the upstream");
-                            SVNCommitClient cc = cm.getCommitClient();
-                            SVNCommitInfo ci = cc.doCommit(new File[] { mr },
-                                                           false, /*keepLocks*/
-                                                           commitMessage+"\n"+mergeUrl+"@"+mergeRev,
-                                                           null,  /*revisionProperties*/
-                                                           null,  /*changelists*/
-                                                           false, /*keepChangelist*/
-                                                           false, /*force*/
-                                                           INFINITY);
+                            String commit_msg = commitMessage + "\n" + mergeUrl + "@" + mergeRev;
+                            SVNCommitInfo ci = execute_commit(mr, commit_msg, cm, logger);
                             if(ci.getNewRevision() < 0)
                             {
                                 trunkCommit = 0L;
@@ -413,13 +433,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                 logger.println("  committed revision " + trunkCommit);
 
                                 logger.println("\nSwitching back to branch\n");
-                                cm.getUpdateClient().doSwitch(mr,
-                                                              mergeUrl,
-                                                              HEAD,
-                                                              HEAD,
-                                                              INFINITY,
-                                                              true,   /*allowUnversionedObstructions*/
-                                                              false); /*depthIsSticky*/
+                                prepare_workspace(mr, mergeUrl, cm, logger);
 
                                 execute_merge(mr,
                                               up,
@@ -428,22 +442,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                               cm,
                                               logger);
 
-                                if(foundConflict[0])
-                                {
-                                    logger.println("Conflict found. Please sync with the upstream to resolve this error.");
-                                    return new IntegrationResult(-1, mergeRev);
-                                }
+                                commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from our integrate to " + up + "@" + trunkCommit;
+                                SVNCommitInfo bci = execute_commit(mr, commit_msg, cm, logger);
 
-                                SVNCommitInfo bci = cc.doCommit(new File[] { mr },
-                                                                false, /*keepLocks*/
-                                                                RebaseAction.COMMIT_MESSAGE_PREFIX
-                                                                   + "Rebasing from our integrate to " + up + "@"
-                                                                   + trunkCommit,
-                                                                null,  /*revisionProperties*/
-                                                                null,  /*changelists*/
-                                                                false, /*keepChangelist*/
-                                                                false, /*force*/
-                                                                INFINITY);
                                 logger.println("  committed revision " + bci.getNewRevision());
                             }
                         }
@@ -568,18 +569,37 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
     private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
         // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
+        SVNDiffClient dc = cm.getDiffClient();
+
         logger.println("The Merge will be from " + mergeUrl + " r" + merge_from + " to r" + mergeRev);
 
         final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from), mergeRev);
-        cm.getDiffClient().doMerge(mergeUrl,
-                                   SVNRevision.create(merge_from), /*pegRevision*/
-                                   Arrays.asList(r),
-                                   mr,
-                                   INFINITY,
-                                   true,   /*useAncestry*/
-                                   true,   /*force*/
-                                   false,  /*dryRun*/
-                                   false); /*recordOnly*/
+        dc.setAllowMixedRevisionsWCForMerge(true);
+        dc.doMerge(mergeUrl,
+                   SVNRevision.create(merge_from), /*pegRevision*/
+                   Arrays.asList(r),
+                   mr,
+                   INFINITY,
+                   true,   /*useAncestry*/
+                   true,   /*force*/
+                   false,  /*dryRun*/
+                   false); /*recordOnly*/
+    }
+
+    private SVNCommitInfo execute_commit(final File mr, final String commit_msg, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        logger.println("Committing changes");
+
+        SVNCommitClient cc = cm.getCommitClient();
+        SVNCommitInfo ci = cc.doCommit(new File[] { mr },
+                                       false, /*keepLocks*/
+                                       commit_msg,
+                                       null,  /*revisionProperties*/
+                                       null,  /*changelists*/
+                                       false, /*keepChangelist*/
+                                       false, /*force*/
+                                       INFINITY);
+        return ci;
     }
 
     private void prepare_workspace(final File mr, final SVNURL target_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
