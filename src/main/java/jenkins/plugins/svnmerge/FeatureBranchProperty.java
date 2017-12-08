@@ -405,7 +405,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         assert (!foundConflict[0]);
 
-                        final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : create_n_last_rebase[0];
+                        final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : create_or_last_rebase;
                         execute_merge(mr,
                                       mergeUrl,
                                       integrate_from,
@@ -574,7 +574,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         logger.println("The Merge will be from " + mergeUrl + " r" + merge_from + " to r" + mergeRev);
 
         final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from), mergeRev);
-        dc.setAllowMixedRevisionsWCForMerge(true);
+        //dc.setAllowMixedRevisionsWCForMerge(true);
         dc.doMerge(mergeUrl,
                    SVNRevision.create(merge_from), /*pegRevision*/
                    Arrays.asList(r),
@@ -615,7 +615,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         logger.printf("Workspace svn URL is %s\n", wc.doInfo(mr, null).getURL());
         if (!wc.doInfo(mr, null).getURL().toString().equals(target_svn_url.toString()))
         {
-            logger.println("Switching to target svn URL (" + target_svn_url + ")");
+            logger.println("Switching to target svn URL " + target_svn_url);
             uc.doSwitch(mr,
                         target_svn_url,
                         HEAD,
