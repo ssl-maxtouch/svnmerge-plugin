@@ -51,10 +51,10 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.lang.mutable.MutableBoolean;
-import org.apache.commons.lang.mutable.MutableLong;
 
 import static org.tmatesoft.svn.core.SVNDepth.*;
 import org.tmatesoft.svn.core.SVNPropertyValue;
+import org.tmatesoft.svn.core.wc.SVNConflictChoice;
 import org.tmatesoft.svn.core.wc.SVNDiffClient;
 import org.tmatesoft.svn.core.wc.SVNPropertyData;
 import static org.tmatesoft.svn.core.wc.SVNRevision.*;
@@ -225,7 +225,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       up,
                                       create_or_last_rebase,
                                       mergeRev,
-                                      false, /*reintegrate*/
                                       cm,
                                       logger);
 
@@ -415,45 +414,41 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       mergeUrl,
                                       integrate_from,
                                       mergeRev,
-                                      true, /*reintegrate*/
                                       cm,
                                       logger);
 
-                        long trunkCommit = -1L;
-                        if (foundConflict[0])
+                        wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
+
+                        long trunkCommit;
+
+                        String commit_msg = commitMessage + "\n" + mergeUrl + "@" + mergeRev;
+                        SVNCommitInfo ci = execute_commit(mr, commit_msg, cm, logger);
+                        if(ci.getNewRevision() < 0)
                         {
-                            logger.println("\n\n!!! Found conflict with the upstream !!!\n");
+                            trunkCommit = 0L;
+                            logger.println("  No changes since the last integration");
                         }
                         else
                         {
-                            String commit_msg = commitMessage + "\n" + mergeUrl + "@" + mergeRev;
-                            SVNCommitInfo ci = execute_commit(mr, commit_msg, cm, logger);
-                            if(ci.getNewRevision() < 0)
-                            {
-                                trunkCommit = 0L;
-                                logger.println("  No changes since the last integration");
-                            }
-                            else
-                            {
-                                trunkCommit = ci.getNewRevision();
-                                logger.println("  committed revision " + trunkCommit);
+                            trunkCommit = ci.getNewRevision();
+                            logger.println("  committed revision " + trunkCommit);
 
-                                logger.println("\nSwitching back to branch\n");
-                                prepare_workspace(mr, mergeUrl, cm, logger);
+                            logger.println("\nSwitching back to branch\n");
+                            prepare_workspace(mr, mergeUrl, cm, logger);
 
-                                execute_merge(mr,
-                                              up,
-                                              create_or_last_rebase,
-                                              SVNRevision.create(trunkCommit),
-                                              true, /*reintegrate*/
-                                              cm,
-                                              logger);
+                            execute_merge(mr,
+                                          up,
+                                          create_or_last_rebase,
+                                          SVNRevision.create(trunkCommit),
+                                          cm,
+                                          logger);
 
-                                commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from our integrate to " + up + "@" + trunkCommit;
-                                SVNCommitInfo bci = execute_commit(mr, commit_msg, cm, logger);
+                            wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
 
-                                logger.println("  committed revision " + bci.getNewRevision());
-                            }
+                            commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from our integrate to " + up + "@" + trunkCommit;
+                            SVNCommitInfo bci = execute_commit(mr, commit_msg, cm, logger);
+
+                            logger.println("  committed revision " + bci.getNewRevision());
                         }
 
                         logger_print_build_status(logger, true);
@@ -620,7 +615,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         return -1;
     }
 
-    private void execute_merge(final File mr, final SVNURL mergeUrl, final long mergeRevFrom, final SVNRevision mergeRevTo, final boolean reintegrate, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private void execute_merge(final File mr, final SVNURL mergeUrl, final long mergeRevFrom, final SVNRevision mergeRevTo, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
         final SVNDiffClient dc = cm.getDiffClient();
         final SVNWCClient wc = cm.getWCClient();
@@ -631,30 +626,20 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         final long latest_merged_rev_from_mergeinfo = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo_pre, merge_path_rel_to_repo_root);
         final long merge_from_opt = latest_merged_rev_from_mergeinfo > mergeRevFrom ? latest_merged_rev_from_mergeinfo : mergeRevFrom;
 
-        logger.println("The " + (reintegrate ? "Reintegrate" : "Merge") + " will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
+        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
 
-        if (reintegrate)
-        {
-            dc.doMergeReIntegrate(mergeUrl, /*srcPath*/
-                                  mergeRevTo, /*pegRevision*/
-                                  mr,       /*dstPath*/
-                                  false);   /*dryRun*/
-        }
-        else
-        {
-            final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRevTo);
-            // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
-            //dc.setAllowMixedRevisionsWCForMerge(true);
-            dc.doMerge(mergeUrl,
-                       SVNRevision.create(merge_from_opt), /*pegRevision*/
-                       Arrays.asList(r),
-                       mr,
-                       INFINITY,
-                       true,   /*useAncestry*/
-                       true,   /*force*/
-                       false,  /*dryRun*/
-                       false); /*recordOnly*/
-        }
+        final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRevTo);
+        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
+        //dc.setAllowMixedRevisionsWCForMerge(true);
+        dc.doMerge(mergeUrl,
+                   SVNRevision.create(merge_from_opt), /*pegRevision*/
+                   Arrays.asList(r),
+                   mr,
+                   INFINITY,
+                   true,   /*useAncestry*/
+                   true,   /*force*/
+                   false,  /*dryRun*/
+                   false); /*recordOnly*/
 
         final String[] lines = get_svn_mergeinfo(mr, wc).split("\n");
 
