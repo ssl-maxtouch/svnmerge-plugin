@@ -568,26 +568,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         return ret_array;
     }
 
-    private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private String get_svn_mergeinfo(final File mr, final SVNWCClient wc) throws SVNException
     {
-        final SVNDiffClient dc = cm.getDiffClient();
-        final SVNWCClient wc = cm.getWCClient();
-
-        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from + " to r" + mergeRev);
-
-        final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from), mergeRev);
-        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
-        //dc.setAllowMixedRevisionsWCForMerge(true);
-        dc.doMerge(mergeUrl,
-                   SVNRevision.create(merge_from), /*pegRevision*/
-                   Arrays.asList(r),
-                   mr,
-                   INFINITY,
-                   true,   /*useAncestry*/
-                   true,   /*force*/
-                   false,  /*dryRun*/
-                   false); /*recordOnly*/
-
         // https://wiki.svnkit.com/Managing_A_Working_Copy
         // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNWCClient.html
         SVNPropertyData mergeinfo_property = wc.doGetProperty(mr, /*path*/
@@ -596,18 +578,79 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                                               HEAD); /*revision*/
         final SVNPropertyValue mergeinfo_property_value = mergeinfo_property.getValue();
         final String mergeinfo_string = mergeinfo_property_value.getString();
-        //logger.println("Found svn:mergeinfo:");
-        //logger.println(mergeinfo_string);
-        final String[] lines = mergeinfo_string.split("\n");
-        final String myself_path = wc.doInfo(mr, null).getURL().toString().replace(wc.doInfo(mr, null).getRepositoryRootURL().toString(), "");
-        final String pattern_mergeinfo_myself = myself_path+":";
-        logger.println("Excluding svn:mergeinfo containing " + pattern_mergeinfo_myself);
+        return mergeinfo_string;
+    }
+
+    private void set_svn_mergeinfo(final File mr, final SVNWCClient wc, final String svn_mergeinfo) throws SVNException
+    {
+        wc.doSetProperty(mr, /*path*/
+                         "svn:mergeinfo", /*propName*/
+                         SVNPropertyValue.create(svn_mergeinfo), /*propValue*/
+                         false, /*skipChecks*/
+                         EMPTY, /*depth */
+                         null, /*handler */
+                         null); /*changeLists */
+    }
+
+    private String get_path_rel_to_repo_root(final File mr, final SVNWCClient wc) throws SVNException
+    {
+        final SVNInfo svn_info = wc.doInfo(mr, null);
+        return svn_info.getURL().toString().replace(svn_info.getRepositoryRootURL().toString(), "");
+    }
+
+    private String get_path_rel_to_repo_root(final SVNURL svn_url, final SVNWCClient wc) throws SVNException
+    {
+        final SVNInfo svn_info = wc.doInfo(svn_url, HEAD, HEAD);
+        return svn_info.getURL().toString().replace(svn_info.getRepositoryRootURL().toString(), "");
+    }
+
+    private long get_latest_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root)
+    {
+        final Pattern pattern_mergeinfo = Pattern.compile(merge_path_rel_to_repo_root+"(:\\d+-|:)(\\d+)");
+        Matcher matcher = pattern_mergeinfo.matcher(svn_mergeinfo);
+        if (matcher.find())
+        {
+            return Long.parseLong(matcher.group(2));
+        }
+        return -1;
+    }
+
+    private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        final SVNDiffClient dc = cm.getDiffClient();
+        final SVNWCClient wc = cm.getWCClient();
+
+        final String myself_path_rel_to_repo_root = get_path_rel_to_repo_root(mr, wc);
+        final String merge_path_rel_to_repo_root = get_path_rel_to_repo_root(mergeUrl, wc);
+        final String svn_mergeinfo_pre = get_svn_mergeinfo(mr, wc);
+        final long latest_merged_rev_from_mergeinfo = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo_pre, merge_path_rel_to_repo_root);
+        final long merge_from_opt = latest_merged_rev_from_mergeinfo > merge_from ? latest_merged_rev_from_mergeinfo : merge_from;
+
+        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRev);
+
+        final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRev);
+        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
+        //dc.setAllowMixedRevisionsWCForMerge(true);
+        dc.doMerge(mergeUrl,
+                   SVNRevision.create(merge_from_opt), /*pegRevision*/
+                   Arrays.asList(r),
+                   mr,
+                   INFINITY,
+                   true,   /*useAncestry*/
+                   true,   /*force*/
+                   false,  /*dryRun*/
+                   false); /*recordOnly*/
+
+        final String[] lines = get_svn_mergeinfo(mr, wc).split("\n");
+
+        final String pattern_mergeinfo_myself = myself_path_rel_to_repo_root+":";
+        //logger.println("Excluding svn:mergeinfo containing " + pattern_mergeinfo_myself);
         final StringBuilder out_svn_mergeinfo = new StringBuilder("");
         for (String l : lines)
         {
             if (l.contains(pattern_mergeinfo_myself))
             {
-                logger.println("~ dropping svn:mergeinfo line " + l);
+                logger.println("Dropping svn:mergeinfo line " + l);
             }
             else
             {
@@ -615,13 +658,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                 out_svn_mergeinfo.append("\n");
             }
         }
-        wc.doSetProperty(mr, /*path*/
-                         "svn:mergeinfo", /*propName*/
-                         SVNPropertyValue.create(out_svn_mergeinfo.toString()), /*propValue*/
-                         false, /*skipChecks*/
-                         EMPTY, /*depth */
-                         null, /*handler */
-                         null); /*changeLists */
+
+        set_svn_mergeinfo(mr, wc, out_svn_mergeinfo.toString());
     }
 
     private SVNCommitInfo execute_commit(final File mr, final String commit_msg, final SVNClientManager cm, final PrintStream logger) throws SVNException
