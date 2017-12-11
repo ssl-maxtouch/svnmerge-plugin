@@ -225,6 +225,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       up,
                                       create_or_last_rebase,
                                       mergeRev,
+                                      false, /*reintegrate*/
                                       cm,
                                       logger);
 
@@ -414,6 +415,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       mergeUrl,
                                       integrate_from,
                                       mergeRev,
+                                      true, /*reintegrate*/
                                       cm,
                                       logger);
 
@@ -443,6 +445,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                               up,
                                               create_or_last_rebase,
                                               SVNRevision.create(trunkCommit),
+                                              true, /*reintegrate*/
                                               cm,
                                               logger);
 
@@ -617,7 +620,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         return -1;
     }
 
-    private void execute_merge(final File mr, final SVNURL mergeUrl, final long merge_from, final SVNRevision mergeRev, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private void execute_merge(final File mr, final SVNURL mergeUrl, final long mergeRevFrom, final SVNRevision mergeRevTo, final boolean reintegrate, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
         final SVNDiffClient dc = cm.getDiffClient();
         final SVNWCClient wc = cm.getWCClient();
@@ -626,22 +629,32 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         final String merge_path_rel_to_repo_root = get_path_rel_to_repo_root(mergeUrl, wc);
         final String svn_mergeinfo_pre = get_svn_mergeinfo(mr, wc);
         final long latest_merged_rev_from_mergeinfo = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo_pre, merge_path_rel_to_repo_root);
-        final long merge_from_opt = latest_merged_rev_from_mergeinfo > merge_from ? latest_merged_rev_from_mergeinfo : merge_from;
+        final long merge_from_opt = latest_merged_rev_from_mergeinfo > mergeRevFrom ? latest_merged_rev_from_mergeinfo : mergeRevFrom;
 
-        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRev);
+        logger.println("The " + (reintegrate ? "Reintegrate" : "Merge") + " will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
 
-        final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRev);
-        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
-        //dc.setAllowMixedRevisionsWCForMerge(true);
-        dc.doMerge(mergeUrl,
-                   SVNRevision.create(merge_from_opt), /*pegRevision*/
-                   Arrays.asList(r),
-                   mr,
-                   INFINITY,
-                   true,   /*useAncestry*/
-                   true,   /*force*/
-                   false,  /*dryRun*/
-                   false); /*recordOnly*/
+        if (reintegrate)
+        {
+            dc.doMergeReIntegrate(mergeUrl, /*srcPath*/
+                                  mergeRevTo, /*pegRevision*/
+                                  mr,       /*dstPath*/
+                                  false);   /*dryRun*/
+        }
+        else
+        {
+            final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRevTo);
+            // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
+            //dc.setAllowMixedRevisionsWCForMerge(true);
+            dc.doMerge(mergeUrl,
+                       SVNRevision.create(merge_from_opt), /*pegRevision*/
+                       Arrays.asList(r),
+                       mr,
+                       INFINITY,
+                       true,   /*useAncestry*/
+                       true,   /*force*/
+                       false,  /*dryRun*/
+                       false); /*recordOnly*/
+        }
 
         final String[] lines = get_svn_mergeinfo(mr, wc).split("\n");
 
