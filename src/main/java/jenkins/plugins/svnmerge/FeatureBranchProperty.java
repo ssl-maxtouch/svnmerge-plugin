@@ -206,7 +206,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         SVNWCClient wc = cm.getWCClient();
 
                         final long[] create_n_last_rebase = parse_branch_log(job_svn_url, cm, logger);
-                        final long create_or_last_rebase = create_n_last_rebase[1] > 0 ? create_n_last_rebase[1] : create_n_last_rebase[0];
+                        /*{localCreate, upstreamCreate, localRebase, upstreamRebase}*/
+                        final long create_or_last_rebase = create_n_last_rebase[2] > 0 ? create_n_last_rebase[2] : create_n_last_rebase[0];
 
                         SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
                         if (mergeRev.getNumber() <= create_or_last_rebase)
@@ -399,7 +400,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         }
 
                         final long[] create_n_last_rebase = parse_branch_log(mergeUrl, cm, logger);
-                        final long create_or_last_rebase = create_n_last_rebase[1] > 0 ? create_n_last_rebase[1] : create_n_last_rebase[0];
+                        /*{localCreate, upstreamCreate, localRebase, upstreamRebase}*/
+                        final long create_or_last_rebase = create_n_last_rebase[2] > 0 ? create_n_last_rebase[2] : create_n_last_rebase[0];
 
                         logger.println("The first revision of this branch is " + create_n_last_rebase[0]);
 
@@ -524,8 +526,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
     private long[] parse_branch_log(final SVNURL branch_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
-        final MutableLong branch_create_revision = new MutableLong(0);
-        final MutableLong branch_last_rebase_revision = new MutableLong(0);
+        final long[] ret_array = {0, 0, 0, 0}; // {localCreate, upstreamCreate, localRebase, upstreamRebase}
 
         logger.println("Parsing log of " + branch_svn_url);
 
@@ -549,22 +550,23 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                     matcher = pattern_create.matcher(e.getMessage());
                     if (matcher.find())
                     {
-                        logger.println("Found the create at r" + e.getRevision() + " - upstream r" + matcher.group(1));
-                        branch_create_revision.setValue(Long.parseLong(matcher.group(1)));
+                        ret_array[0] = e.getRevision();
+                        ret_array[1] = Long.parseLong(matcher.group(1));
+                        logger.println("Found the create at r" + ret_array[0] + " - upstream r" + ret_array[1]);
                     }
-                    else if (0 == branch_last_rebase_revision.longValue())
+                    else if (0 == ret_array[2])
                     {
                         matcher = pattern_rebase.matcher(e.getMessage());
                         if (matcher.find())
                         {
-                            logger.println("Found a rebase at r" + e.getRevision() + " - upstream r" + matcher.group(1));
-                            branch_last_rebase_revision.setValue(Long.parseLong(matcher.group(1)));
+                            ret_array[2] = e.getRevision();
+                            ret_array[3] = Long.parseLong(matcher.group(1));
+                            logger.println("Found a rebase at r" + ret_array[2] + " - upstream r" + ret_array[3]);
                         }
                     }
                 }
             }
         );
-        long[] ret_array = {branch_create_revision.longValue(), branch_last_rebase_revision.longValue()};
         return ret_array;
     }
 
