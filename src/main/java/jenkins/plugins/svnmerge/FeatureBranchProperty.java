@@ -209,10 +209,10 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         final long[] create_n_last_rebase = parse_branch_log(job_svn_url, cm, logger);
                         /*{localCreate, upstreamCreate, localRebase, upstreamRebase}*/
-                        final long create_or_last_rebase = create_n_last_rebase[2] > 0 ? create_n_last_rebase[2] : create_n_last_rebase[0];
+                        final long upstream_create_or_last_rebase = create_n_last_rebase[3] > 0 ? create_n_last_rebase[3] : create_n_last_rebase[1];
 
-                        SVNRevision mergeRev = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
-                        if (mergeRev.getNumber() <= create_or_last_rebase)
+                        SVNRevision mergeRevTo = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
+                        if (mergeRevTo.getNumber() <= upstream_create_or_last_rebase)
                         {
                             logger.println("  No new commits since the last rebase. This rebase was a no-op.");
                             logger_print_build_status(logger, true);
@@ -222,9 +222,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         execute_workspace_svn_prepare(mr, job_svn_url, cm, logger);
 
                         execute_merge(mr,
-                                      up,
-                                      create_or_last_rebase,
-                                      mergeRev,
+                                      up, /*mergeUrl*/
+                                      upstream_create_or_last_rebase, /*mergeRevFrom*/
+                                      mergeRevTo, /*mergeRevTo*/
                                       cm,
                                       logger);
 
@@ -238,7 +238,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         {
                             try
                             {
-                                final String commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from " + up + "@" + mergeRev;
+                                final String commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from " + up + "@" + mergeRevTo;
                                 SVNCommitInfo ci = execute_commit(mr, commit_msg, cm, logger);
                                 if (ci.getNewRevision() < 0)
                                 {
@@ -360,36 +360,46 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         SVNWCClient wc = cm.getWCClient();
                         SVNURL mergeUrl = branchURL != null ? SVNURL.parseURIDecoded(branchURL) : job_svn_url;
-                        SVNRevision mergeRev = branchRev >= 0 ? SVNRevision.create(branchRev) : wc.doInfo(mergeUrl, HEAD, HEAD).getCommittedRevision();
+                        SVNRevision mergeRevTo = branchRev >= 0 ? SVNRevision.create(branchRev) : wc.doInfo(mergeUrl, HEAD, HEAD).getCommittedRevision();
 
                         // do we have any meaningful changes in this branch worthy of integration?
                         if (lastIntegrationSourceRevision != null)
                         {
                             final boolean changesFound = integrate_check_necessary(mergeUrl,
-                                                                                   mergeRev,
+                                                                                   mergeRevTo,
                                                                                    lastIntegrationSourceRevision,
                                                                                    cm,
                                                                                    logger);
                             if (!changesFound)
                             {
                                 logger.println("No changes to be integrated. Skipping integration.");
-                                return new IntegrationResult(0, mergeRev);
+                                return new IntegrationResult(0, mergeRevTo);
                             }
                         }
 
                         final long[] create_n_last_rebase = parse_branch_log(mergeUrl, cm, logger);
                         /*{localCreate, upstreamCreate, localRebase, upstreamRebase}*/
-                        final long create_or_last_rebase = create_n_last_rebase[2] > 0 ? create_n_last_rebase[2] : create_n_last_rebase[0];
-
-                        logger.println("The first revision of this branch is " + create_n_last_rebase[0]);
+                        final long upstream_create_or_last_rebase = create_n_last_rebase[3] > 0 ? create_n_last_rebase[3] : create_n_last_rebase[1];
 
                         execute_workspace_svn_prepare(mr, up, cm, logger);
 
-                        final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : create_or_last_rebase;
+                        final String branch_path_rel_to_repo_root = get_path_rel_to_repo_root(mergeUrl, wc);
+                        final String svn_mergeinfo = get_svn_mergeinfo(mr, wc);
+                        long integrate_latest = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo, branch_path_rel_to_repo_root);
+                        if (integrate_latest < create_n_last_rebase[1])
+                        {
+                            integrate_latest = create_n_last_rebase[1];
+                            logger.println("Latest integration is the CREATE - r" + integrate_latest);
+                        }
+                        else
+                        {
+                            logger.println("Latest integration from svn:mergeinfo - r" + integrate_latest);
+                        }
+
                         execute_merge(mr,
-                                      mergeUrl,
-                                      integrate_from,
-                                      mergeRev,
+                                      mergeUrl, /*mergeUrl*/
+                                      integrate_latest, /*mergeRevFrom*/
+                                      mergeRevTo, /*mergeRevTo*/
                                       cm,
                                       logger);
 
@@ -397,12 +407,12 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         {
                             logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
                             logger_print_build_status(logger, false);
-                            return new IntegrationResult(-1L, mergeRev);
+                            return new IntegrationResult(-1L, mergeRevTo);
                         }
 
                         long trunkCommit;
 
-                        String commit_msg = commitMessage + "\n" + mergeUrl + "@" + mergeRev;
+                        String commit_msg = commitMessage + "\n" + mergeUrl + "@" + mergeRevTo;
                         SVNCommitInfo ci;
                         try
                         {
@@ -413,7 +423,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             logger.println(e.getLocalizedMessage());
                             logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
                             logger_print_build_status(logger, false);
-                            return new IntegrationResult(-1L, mergeRev);
+                            return new IntegrationResult(-1L, mergeRevTo);
                         }
                         if(ci.getNewRevision() < 0)
                         {
@@ -430,7 +440,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                             execute_merge(mr,
                                           up,
-                                          create_or_last_rebase,
+                                          upstream_create_or_last_rebase,
                                           SVNRevision.create(trunkCommit),
                                           cm,
                                           logger);
@@ -444,7 +454,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         logger_print_build_status(logger, true);
 
-                        return new IntegrationResult(trunkCommit, mergeRev);
+                        return new IntegrationResult(trunkCommit, mergeRevTo);
                     }
                     catch (SVNException e)
                     {
