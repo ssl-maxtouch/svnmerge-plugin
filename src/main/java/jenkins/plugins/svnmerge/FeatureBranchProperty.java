@@ -219,8 +219,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         prepare_workspace(mr, job_svn_url, cm, logger);
 
-                        assert (!foundConflict[0]);
-
                         execute_merge(mr,
                                       up,
                                       create_or_last_rebase,
@@ -230,7 +228,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         if(foundConflict[0])
                         {
-                            logger_print_rebase_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
                             logger_print_build_status(logger, false);
                             return -1L;
                         }
@@ -257,7 +255,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             {
                                 logger.println("\n!!! SVNException !!!\n");
                                 logger.println(e.getLocalizedMessage());
-                                logger_print_rebase_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
+                                logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
                                 logger_print_build_status(logger, false);
                                 return -1L;
                             }
@@ -366,33 +364,12 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         // do we have any meaningful changes in this branch worthy of integration?
                         if (lastIntegrationSourceRevision != null)
                         {
-                            final MutableBoolean changesFound = new MutableBoolean(false);
-                            logger.println("Check for changes after our last integration of r" + lastIntegrationSourceRevision);
-                            cm.getLogClient().doLog(mergeUrl,
-                                                    null,     /*paths*/
-                                                    mergeRev, /*pegRevision*/
-                                                    mergeRev, /*startRevision*/
-                                                    SVNRevision.create(lastIntegrationSourceRevision), /*endRevision*/
-                                                    true,     /*stopOnCopy*/
-                                                    false,    /*discoverChangedPaths*/
-                                                    0,        /*limit*/
-                                                    new ISVNLogEntryHandler()
-                            {
-                                public void handleLogEntry(SVNLogEntry e) throws SVNException
-                                {
-                                    if (!changesFound.booleanValue())
-                                    {
-                                        String message = e.getMessage();
-                                        if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX))
-                                        {
-                                            logger.println("Found at least a commit to be integrated: " + message);
-                                            changesFound.setValue(true);
-                                        }
-                                    }
-                                }
-                            });
-                            // didn't find anything interesting. all the changes are our merges
-                            if (!changesFound.booleanValue())
+                            final boolean changesFound = integrate_check_necessary(mergeUrl,
+                                                                                   mergeRev,
+                                                                                   lastIntegrationSourceRevision,
+                                                                                   cm,
+                                                                                   logger);
+                            if (!changesFound)
                             {
                                 logger.println("No changes to be integrated. Skipping integration.");
                                 return new IntegrationResult(0, mergeRev);
@@ -407,8 +384,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         prepare_workspace(mr, up, cm, logger);
 
-                        assert (!foundConflict[0]);
-
                         final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : create_or_last_rebase;
                         execute_merge(mr,
                                       mergeUrl,
@@ -416,8 +391,13 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       mergeRev,
                                       cm,
                                       logger);
+                        //wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
 
-                        wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
+                        if(foundConflict[0])
+                        {
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
+                            return new IntegrationResult(-1L, mergeRev);
+                        }
 
                         long trunkCommit;
 
@@ -442,8 +422,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                           SVNRevision.create(trunkCommit),
                                           cm,
                                           logger);
-
-                            wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
+                            //wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
 
                             commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from our integrate to " + up + "@" + trunkCommit;
                             SVNCommitInfo bci = execute_commit(mr, commit_msg, cm, logger);
@@ -725,14 +704,44 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         logger.printf("Workspace is %s r%s\n", wsState.getURL().toString() , wsState.getCommittedRevision().toString());
     }
 
-    private void logger_print_rebase_conflict(final PrintStream logger, final String devbranch_URL, final String upstream_URL)
+    private boolean integrate_check_necessary(final SVNURL mergeUrl, final SVNRevision mergeRevTo, final long lastIntegrationSourceRevision, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        final MutableBoolean changesFound = new MutableBoolean(false);
+        logger.println("Check for changes after our last integration of r" + lastIntegrationSourceRevision);
+        cm.getLogClient().doLog(mergeUrl,
+                                null,     /*paths*/
+                                mergeRevTo, /*pegRevision*/
+                                mergeRevTo, /*startRevision*/
+                                SVNRevision.create(lastIntegrationSourceRevision), /*endRevision*/
+                                true,     /*stopOnCopy*/
+                                false,    /*discoverChangedPaths*/
+                                0,        /*limit*/
+                                new ISVNLogEntryHandler()
+        {
+            public void handleLogEntry(SVNLogEntry e) throws SVNException
+            {
+                if (!changesFound.booleanValue())
+                {
+                    String message = e.getMessage();
+                    if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX))
+                    {
+                        logger.println("Found at least a commit to be integrated: " + message);
+                        changesFound.setValue(true);
+                    }
+                }
+            }
+        });
+        return changesFound.booleanValue();
+    }
+
+    private void logger_print_merge_conflict(final PrintStream logger, final String mergeTo_URL, final String mergeFrom_URL)
     {
         logger.println("\n\n!!! Found conflict !!!\n");
-        logger.printf( "- Checkout (or Update) %s\n", devbranch_URL);
+        logger.printf( "- Checkout (or Update) %s\n", mergeTo_URL);
         logger.println("- Right click -> TortoiseSVN -> Merge");
         logger.println("  - select 'Merge a range of revisions'");
         logger.println("  - click 'Next'");
-        logger.printf( "  - set 'URL to merge from' to %s\n", upstream_URL);
+        logger.printf( "  - set 'URL to merge from' to %s\n", mergeFrom_URL);
         logger.println("  - set 'Revision range to merge' to 'all revisions'");
         logger.println("  - click 'Next'");
         logger.println("  - click 'Merge'");
