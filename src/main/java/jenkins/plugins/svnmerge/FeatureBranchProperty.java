@@ -391,7 +391,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                       mergeRev,
                                       cm,
                                       logger);
-                        //wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
 
                         if(foundConflict[0])
                         {
@@ -402,7 +401,16 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         long trunkCommit;
 
                         String commit_msg = commitMessage + "\n" + mergeUrl + "@" + mergeRev;
-                        SVNCommitInfo ci = execute_commit(mr, commit_msg, cm, logger);
+                        SVNCommitInfo ci;
+                        try
+                        {
+                            ci = execute_commit(mr, commit_msg, cm, logger);
+                        }
+                        catch (SVNException e)
+                        {
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
+                            return new IntegrationResult(-1L, mergeRev);
+                        }
                         if(ci.getNewRevision() < 0)
                         {
                             trunkCommit = 0L;
@@ -422,7 +430,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                           SVNRevision.create(trunkCommit),
                                           cm,
                                           logger);
-                            //wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
+                            wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
 
                             commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from our integrate to " + up + "@" + trunkCommit;
                             SVNCommitInfo bci = execute_commit(mr, commit_msg, cm, logger);
@@ -622,12 +630,11 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
         final String[] lines = get_svn_mergeinfo(mr, wc).split("\n");
 
-        final String pattern_mergeinfo_myself = myself_path_rel_to_repo_root+":";
         //logger.println("Excluding svn:mergeinfo containing " + pattern_mergeinfo_myself);
         final StringBuilder out_svn_mergeinfo = new StringBuilder("");
         for (String l : lines)
         {
-            if (l.contains(pattern_mergeinfo_myself))
+            if (l.contains(myself_path_rel_to_repo_root))
             {
                 logger.println("Dropping svn:mergeinfo line " + l);
             }
