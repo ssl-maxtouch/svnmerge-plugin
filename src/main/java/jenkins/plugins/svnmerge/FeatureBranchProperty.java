@@ -219,7 +219,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             return 0L;
                         }
 
-                        prepare_workspace(mr, job_svn_url, cm, logger);
+                        execute_workspace_svn_prepare(mr, job_svn_url, cm, logger);
 
                         execute_merge(mr,
                                       up,
@@ -255,7 +255,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             }
                             catch (SVNException e)
                             {
-                                logger.println("\n!!! SVNException !!!\n");
                                 logger.println(e.getLocalizedMessage());
                                 logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
                                 logger_print_build_status(logger, false);
@@ -384,7 +383,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         logger.println("The first revision of this branch is " + create_n_last_rebase[0]);
 
-                        prepare_workspace(mr, up, cm, logger);
+                        execute_workspace_svn_prepare(mr, up, cm, logger);
 
                         final long integrate_from = lastIntegrationSourceRevision != null ? lastIntegrationSourceRevision : create_or_last_rebase;
                         execute_merge(mr,
@@ -397,6 +396,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         if(foundConflict[0])
                         {
                             logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
+                            logger_print_build_status(logger, false);
                             return new IntegrationResult(-1L, mergeRev);
                         }
 
@@ -410,7 +410,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         }
                         catch (SVNException e)
                         {
+                            logger.println(e.getLocalizedMessage());
                             logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
+                            logger_print_build_status(logger, false);
                             return new IntegrationResult(-1L, mergeRev);
                         }
                         if(ci.getNewRevision() < 0)
@@ -424,7 +426,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             logger.println("  committed revision " + trunkCommit);
 
                             logger.println("\nSwitching back to branch\n");
-                            prepare_workspace(mr, mergeUrl, cm, logger);
+                            execute_workspace_svn_prepare(mr, mergeUrl, cm, logger);
 
                             execute_merge(mr,
                                           up,
@@ -604,32 +606,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         return -1;
     }
 
-    private void execute_merge(final File mr, final SVNURL mergeUrl, final long mergeRevFrom, final SVNRevision mergeRevTo, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private List<File> get_changed_files_list(final File mr, final SVNClientManager cm) throws SVNException
     {
-        final SVNDiffClient dc = cm.getDiffClient();
-        final SVNWCClient wc = cm.getWCClient();
-
-        final String myself_path_rel_to_repo_root = get_path_rel_to_repo_root(mr, wc);
-        final String merge_path_rel_to_repo_root = get_path_rel_to_repo_root(mergeUrl, wc);
-        final String svn_mergeinfo_pre = get_svn_mergeinfo(mr, wc);
-        final long latest_merged_rev_from_mergeinfo = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo_pre, merge_path_rel_to_repo_root);
-        final long merge_from_opt = latest_merged_rev_from_mergeinfo > mergeRevFrom ? latest_merged_rev_from_mergeinfo : mergeRevFrom;
-
-        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
-
-        final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRevTo);
-        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
-        //dc.setAllowMixedRevisionsWCForMerge(true);
-        dc.doMerge(mergeUrl,
-                   SVNRevision.create(merge_from_opt), /*pegRevision*/
-                   Arrays.asList(r),
-                   mr,
-                   INFINITY,
-                   true,   /*useAncestry*/
-                   true,   /*force*/
-                   false,  /*dryRun*/
-                   false); /*recordOnly*/
-
         final List<File> fileList = new ArrayList<File>();
         cm.getStatusClient().doStatus(mr,
                                       null, /*revision*/
@@ -653,6 +631,14 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
             }
         },
                                       null); /*changeLists */
+        return fileList;
+    }
+
+    private void workspace_clean_svn_mergeinfo(final File mr, final String myself_path_rel_to_repo_root, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        final SVNWCClient wc = cm.getWCClient();
+        List<File> fileList = get_changed_files_list(mr, cm);
+        fileList.add(mr);
 
         for (File f : fileList)
         {
@@ -661,6 +647,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
             {
                 continue;
             }
+
             final String[] lines = svn_mergeinfo.split("\n");
 
             logger.println("Analysing svn:mergeinfo of " + f.toString());
@@ -682,6 +669,37 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         }
     }
 
+    private void execute_merge(final File mr, final SVNURL mergeUrl, final long mergeRevFrom, final SVNRevision mergeRevTo, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        final SVNDiffClient dc = cm.getDiffClient();
+        final SVNWCClient wc = cm.getWCClient();
+
+        final String myself_path_rel_to_repo_root = get_path_rel_to_repo_root(mr, wc);
+        final String merge_path_rel_to_repo_root = get_path_rel_to_repo_root(mergeUrl, wc);
+        final String svn_mergeinfo_pre = get_svn_mergeinfo(mr, wc);
+        final long latest_merged_rev_from_mergeinfo = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo_pre, merge_path_rel_to_repo_root);
+        final long merge_from_opt = latest_merged_rev_from_mergeinfo > mergeRevFrom ? latest_merged_rev_from_mergeinfo : mergeRevFrom;
+
+        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
+
+        workspace_clean_svn_mergeinfo(mr, myself_path_rel_to_repo_root, cm, logger);
+
+        final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRevTo);
+        // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
+        //dc.setAllowMixedRevisionsWCForMerge(true);
+        dc.doMerge(mergeUrl,
+                   SVNRevision.create(merge_from_opt), /*pegRevision*/
+                   Arrays.asList(r),
+                   mr,
+                   INFINITY,
+                   true,   /*useAncestry*/
+                   true,   /*force*/
+                   false,  /*dryRun*/
+                   false); /*recordOnly*/
+
+        workspace_clean_svn_mergeinfo(mr, myself_path_rel_to_repo_root, cm, logger);
+    }
+
     private SVNCommitInfo execute_commit(final File mr, final String commit_msg, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
         logger.println("Committing changes");
@@ -698,7 +716,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         return ci;
     }
 
-    private void prepare_workspace(final File mr, final SVNURL target_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private void execute_workspace_svn_prepare(final File mr, final SVNURL target_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
         final SVNUpdateClient uc = cm.getUpdateClient();
         final SVNWCClient wc = cm.getWCClient();
