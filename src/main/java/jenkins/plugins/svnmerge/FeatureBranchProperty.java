@@ -54,11 +54,13 @@ import org.apache.commons.lang.mutable.MutableBoolean;
 
 import static org.tmatesoft.svn.core.SVNDepth.*;
 import org.tmatesoft.svn.core.SVNPropertyValue;
+import org.tmatesoft.svn.core.wc.ISVNStatusHandler;
 import org.tmatesoft.svn.core.wc.SVNConflictChoice;
 import org.tmatesoft.svn.core.wc.SVNDiffClient;
 import org.tmatesoft.svn.core.wc.SVNPropertyData;
 import static org.tmatesoft.svn.core.wc.SVNRevision.*;
 import org.tmatesoft.svn.core.wc.SVNRevisionRange;
+import org.tmatesoft.svn.core.wc.SVNStatus;
 
 /**
  * {@link JobProperty} for feature branch projects.
@@ -628,24 +630,56 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                    false,  /*dryRun*/
                    false); /*recordOnly*/
 
-        final String[] lines = get_svn_mergeinfo(mr, wc).split("\n");
-
-        //logger.println("Excluding svn:mergeinfo containing " + pattern_mergeinfo_myself);
-        final StringBuilder out_svn_mergeinfo = new StringBuilder("");
-        for (String l : lines)
+        final List<File> fileList = new ArrayList<File>();
+        cm.getStatusClient().doStatus(mr,
+                                      null, /*revision*/
+                                      INFINITY,
+                                      false, /*remote*/
+                                      false,  /*reportAll*/
+                                      false, /*includeIgnored*/
+                                      false, /*collectParentExternals*/
+                                      new ISVNStatusHandler()
         {
-            if (l.contains(myself_path_rel_to_repo_root))
+            @Override
+            public void handleStatus(SVNStatus status) throws SVNException
             {
-                logger.println("Dropping svn:mergeinfo line " + l);
+                SVNStatusType statusType = status.getContentsStatus();
+                if (statusType != SVNStatusType.STATUS_NONE && 
+                    statusType != SVNStatusType.STATUS_NORMAL &&
+                    statusType != SVNStatusType.STATUS_IGNORED)
+                {
+                    fileList.add(status.getFile());
+                }
             }
-            else
-            {
-                out_svn_mergeinfo.append(l);
-                out_svn_mergeinfo.append("\n");
-            }
-        }
+        },
+                                      null); /*changeLists */
 
-        set_svn_mergeinfo(mr, wc, out_svn_mergeinfo.toString());
+        for (File f : fileList)
+        {
+            final String svn_mergeinfo = get_svn_mergeinfo(f, wc);
+            if (svn_mergeinfo.isEmpty())
+            {
+                continue;
+            }
+            final String[] lines = svn_mergeinfo.split("\n");
+
+            logger.println("Analysing svn:mergeinfo of " + f.toString());
+            final StringBuilder out_svn_mergeinfo = new StringBuilder("");
+            for (String l : lines)
+            {
+                if (l.contains(myself_path_rel_to_repo_root))
+                {
+                    logger.println("Dropping svn:mergeinfo line " + l);
+                }
+                else
+                {
+                    out_svn_mergeinfo.append(l);
+                    out_svn_mergeinfo.append("\n");
+                }
+            }
+
+            set_svn_mergeinfo(f, wc, out_svn_mergeinfo.toString());
+        }
     }
 
     private SVNCommitInfo execute_commit(final File mr, final String commit_msg, final SVNClientManager cm, final PrintStream logger) throws SVNException
