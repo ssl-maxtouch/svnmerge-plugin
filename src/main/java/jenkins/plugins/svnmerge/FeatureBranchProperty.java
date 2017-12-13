@@ -221,12 +221,22 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         execute_workspace_svn_prepare(mr, job_svn_url, cm, logger);
 
-                        execute_merge(mr,
-                                      up, /*mergeUrl*/
-                                      upstream_create_or_last_rebase, /*mergeRevFrom*/
-                                      mergeRevTo, /*mergeRevTo*/
-                                      cm,
-                                      logger);
+                        try
+                        {
+                            execute_merge(mr,
+                                          up, /*mergeUrl*/
+                                          upstream_create_or_last_rebase, /*mergeRevFrom*/
+                                          mergeRevTo, /*mergeRevTo*/
+                                          cm,
+                                          logger);
+                        }
+                        catch (SVNException e)
+                        {
+                            logger.println(e.getLocalizedMessage());
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
+                            logger_print_build_status(logger, false);
+                            return -1L;
+                        }
 
                         if(foundConflict[0])
                         {
@@ -238,7 +248,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         {
                             try
                             {
-                                final String commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from " + up + "@" + mergeRevTo;
+                                final String commit_msg = get_jira_number(job_svn_url.toString()) +
+                                                            ": " + RebaseAction.COMMIT_MESSAGE_PREFIX +
+                                                            " - from " + remove_url_prefix(up.toString()) + "@" + mergeRevTo;
                                 SVNCommitInfo ci = execute_commit(mr, commit_msg, cm, logger);
                                 if (ci.getNewRevision() < 0)
                                 {
@@ -386,10 +398,10 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         final String branch_path_rel_to_repo_root = get_path_rel_to_repo_root(mergeUrl, wc);
                         final String svn_mergeinfo = get_svn_mergeinfo(mr, wc);
                         long integrate_latest = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo, branch_path_rel_to_repo_root);
-                        if (integrate_latest < create_n_last_rebase[1])
+                        if (integrate_latest < create_n_last_rebase[0])
                         {
-                            integrate_latest = create_n_last_rebase[1];
-                            logger.println("Latest integration is the CREATE - r" + integrate_latest);
+                            integrate_latest = create_n_last_rebase[0];
+                            logger.println("Latest integration is the create - r" + integrate_latest);
                         }
                         else
                         {
@@ -410,9 +422,10 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             return new IntegrationResult(-1L, mergeRevTo);
                         }
 
+                        final String jira_commit_prefix = get_jira_number(mergeUrl.toString()) + ": ";
                         long trunkCommit;
 
-                        String commit_msg = commitMessage + "\n" + mergeUrl + "@" + mergeRevTo;
+                        String commit_msg = jira_commit_prefix + commitMessage + "\n" + remove_url_prefix(mergeUrl.toString()) + "@" + mergeRevTo;
                         SVNCommitInfo ci;
                         try
                         {
@@ -446,7 +459,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                           logger);
                             wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
 
-                            commit_msg = RebaseAction.COMMIT_MESSAGE_PREFIX + "Rebasing from our integrate to " + up + "@" + trunkCommit;
+                            commit_msg = jira_commit_prefix + RebaseAction.COMMIT_MESSAGE_PREFIX +
+                                            " - from (our integrate) " + remove_url_prefix(up.toString()) + "@" + trunkCommit;
                             SVNCommitInfo bci = execute_commit(mr, commit_msg, cm, logger);
 
                             logger.println("  committed revision " + bci.getNewRevision());
@@ -523,9 +537,13 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
     private static final Logger LOGGER = Logger.getLogger(FeatureBranchProperty.class.getName());
 
+    private static final Pattern COMMIT_MESSAGE_PATTERN_CREATE = Pattern.compile(":\\s*CREATED\\s*-.+@(\\d+)");
+    private static final Pattern COMMIT_MESSAGE_PATTERN_REBASE = Pattern.compile(":\\s*REBASED\\s*-.+@(\\d+)");
+
     private long[] parse_branch_log(final SVNURL branch_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
         final long[] ret_array = {0, 0, 0, 0}; // {localCreate, upstreamCreate, localRebase, upstreamRebase}
+        final long[] latestProcessedRev = {0};
 
         logger.println("Parsing log of " + branch_svn_url);
 
@@ -541,24 +559,23 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
             0,        /*limit*/
             new ISVNLogEntryHandler()
             {
-                final Pattern pattern_rebase = Pattern.compile("\\[REBASE\\].+@(\\d+)");
-                final Pattern pattern_create = Pattern.compile("\\[CREATE\\].+\\?r=(\\d+)");
                 Matcher matcher;
                 public void handleLogEntry(SVNLogEntry e) throws SVNException
                 {
-                    matcher = pattern_create.matcher(e.getMessage());
+                    latestProcessedRev[0] = e.getRevision();
+                    matcher = COMMIT_MESSAGE_PATTERN_CREATE.matcher(e.getMessage());
                     if (matcher.find())
                     {
-                        ret_array[0] = e.getRevision();
+                        ret_array[0] = latestProcessedRev[0];
                         ret_array[1] = Long.parseLong(matcher.group(1));
                         logger.println("Found the create at r" + ret_array[0] + " - upstream r" + ret_array[1]);
                     }
                     else if (0 == ret_array[2])
                     {
-                        matcher = pattern_rebase.matcher(e.getMessage());
+                        matcher = COMMIT_MESSAGE_PATTERN_REBASE.matcher(e.getMessage());
                         if (matcher.find())
                         {
-                            ret_array[2] = e.getRevision();
+                            ret_array[2] = latestProcessedRev[0];
                             ret_array[3] = Long.parseLong(matcher.group(1));
                             logger.println("Found a rebase at r" + ret_array[2] + " - upstream r" + ret_array[3]);
                         }
@@ -566,6 +583,12 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                 }
             }
         );
+        if (0 == ret_array[0])
+        {
+            ret_array[0] = latestProcessedRev[0];
+            ret_array[1] = latestProcessedRev[0];
+            logger.println("Could not find the create, exploiting 'stopOnCopy' to get r" + latestProcessedRev[0]);
+        }
         return ret_array;
     }
 
@@ -603,6 +626,25 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
     {
         final SVNInfo svn_info = wc.doInfo(svn_url, HEAD, HEAD);
         return svn_info.getURL().toString().replace(svn_info.getRepositoryRootURL().toString(), "");
+    }
+
+    private String get_jira_number(final String branch_url)
+    {
+        final String[] branch_elements = branch_url.split("/");
+        final String branch_name = branch_elements[branch_elements.length-1];
+        // jira_number assuming branch naming "yyyyMMdd_<JIRA#>_<DescNoSpaces>"
+        final String jira_number = branch_name.split("_")[1];
+        return jira_number;
+    }
+
+    private String remove_url_prefix(final String svn_url)
+    {
+        final int drop_index = svn_url.indexOf("/repo/touch/");
+        if (drop_index >= 0)
+        {
+            return svn_url.substring(drop_index+11);
+        }
+        return svn_url;
     }
 
     private long get_latest_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root)
@@ -690,9 +732,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         final long latest_merged_rev_from_mergeinfo = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo_pre, merge_path_rel_to_repo_root);
         final long merge_from_opt = latest_merged_rev_from_mergeinfo > mergeRevFrom ? latest_merged_rev_from_mergeinfo : mergeRevFrom;
 
-        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
-
         workspace_clean_svn_mergeinfo(mr, myself_path_rel_to_repo_root, cm, logger);
+
+        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
 
         final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRevTo);
         // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
@@ -791,10 +833,10 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
             {
                 if (!changesFound.booleanValue())
                 {
-                    String message = e.getMessage();
-                    if (!message.startsWith(RebaseAction.COMMIT_MESSAGE_PREFIX))
+                    final Matcher matcher = COMMIT_MESSAGE_PATTERN_REBASE.matcher(e.getMessage());
+                    if (!matcher.find())
                     {
-                        logger.println("Found at least a commit to be integrated: " + message);
+                        logger.println("Found at least a commit to be integrated: " + e.getMessage());
                         changesFound.setValue(true);
                     }
                 }

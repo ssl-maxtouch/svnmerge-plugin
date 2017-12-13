@@ -54,7 +54,7 @@ l.layout(norefresh:"true", title:_("title", my.project.displayName)) {
                             text(_("Branch Name")+":")
                         }
                         td (class: "setting-main") {
-                            input (type: "text", value: date.format("yyyyMMdd_"), name: "name", class:"setting-input")
+                            input (type: "text", value: date.format("yyyyMMdd")+"_<JIRA#>_<DescNoSpaces>", name: "name", class:"setting-input")
                         }
                     }
                 }

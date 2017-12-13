@@ -218,12 +218,14 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
     /**
      * This is the md5 hash to keep track of where this change is integrated.
      */
-    public String getFingerprintKey() {
-        return Util.getDigestOf(getCommitMessage()+"#"+integratedRevision);
+    public String getFingerprintKey()
+    {
+        return Util.getDigestOf(getCommitMessage() + "#" + integratedRevision);
     }
 
-    private String getCommitMessage() {
-        return COMMIT_MESSAGE_PREFIX + build.getFullDisplayName()+ COMMIT_MESSAGE_SUFFIX;
+    private String getCommitMessage()
+    {
+        return COMMIT_MESSAGE_PREFIX + " " + build.getFullDisplayName() + " " + COMMIT_MESSAGE_SUFFIX;
     }
 
     /**
@@ -269,10 +271,12 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
      * Otherwise null.
      */
     public static Fingerprint getIntegrationFingerprint(Entry changeEntry) throws IOException {
-        if (changeEntry instanceof LogEntry) {
+        if (changeEntry instanceof LogEntry)
+        {
             LogEntry le = (LogEntry) changeEntry;
             String msg = changeEntry.getMsg().trim();
-            if(msg.startsWith(COMMIT_MESSAGE_PREFIX) && msg.contains(COMMIT_MESSAGE_SUFFIX + "\n")) {
+            if(msg.contains(COMMIT_MESSAGE_PREFIX) && msg.contains(COMMIT_MESSAGE_SUFFIX + "\n"))
+            {
                 String s = msg.substring(0, msg.indexOf(COMMIT_MESSAGE_SUFFIX) + COMMIT_MESSAGE_SUFFIX.length());
                 // this build is merging an integration. Leave this in the record
                 return Jenkins.getInstance().getFingerprintMap().get(Util.getDigestOf(s + "#" + le.getRevision()));
@@ -282,7 +286,7 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
     }
 
     // used to find integration commits. commit messages start with PREFIX, contains SUFFIX, followed by paths
-    static final String COMMIT_MESSAGE_PREFIX = "[INTEGRATE] ";
-    static final String COMMIT_MESSAGE_SUFFIX = " (from Jenkins)";
+    static final String COMMIT_MESSAGE_PREFIX = "INTEGRATED";
+    static final String COMMIT_MESSAGE_SUFFIX = "(svnmerge)";
     private static final Logger LOGGER = Logger.getLogger(IntegrateAction.class.getName());
 }

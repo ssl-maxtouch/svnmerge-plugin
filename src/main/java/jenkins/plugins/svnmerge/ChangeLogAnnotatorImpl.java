@@ -19,17 +19,21 @@ import java.io.IOException;
  */
 @Extension
 public class ChangeLogAnnotatorImpl extends ChangeLogAnnotator {
-    public void annotate(AbstractBuild<?, ?> build, Entry change, MarkupText text) {
-        try {
+    public void annotate(AbstractBuild<?, ?> build, Entry change, MarkupText text)
+    {
+        try
+        {
             Fingerprint f = IntegrateAction.getIntegrationFingerprint(change);
-            if(f!=null) {
+            if (f != null)
+            {
                 Run r = f.getOriginal().getRun();
                 text.addMarkup(
-                    IntegrateAction.COMMIT_MESSAGE_PREFIX.length(),
+                    text.getText().indexOf(IntegrateAction.COMMIT_MESSAGE_PREFIX)+
+                        IntegrateAction.COMMIT_MESSAGE_PREFIX.length(),
                     text.getText().indexOf(IntegrateAction.COMMIT_MESSAGE_SUFFIX),
                     "<a href='"+
-                    Stapler.getCurrentRequest().getContextPath()+"/"+r.getUrl()
-                    +"'>","</a>");
+                        Stapler.getCurrentRequest().getContextPath()+"/"+r.getUrl()+
+                        "'>","</a>");
             }
         } catch (IOException e) {
             // ignore

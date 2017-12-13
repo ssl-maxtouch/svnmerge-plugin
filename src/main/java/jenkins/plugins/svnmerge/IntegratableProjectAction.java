@@ -112,8 +112,8 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
     @RequirePOST
     public void doNewBranch(StaplerRequest req, StaplerResponse rsp,
                             @QueryParameter String name,
-                            @QueryParameter boolean attach) throws ServletException, IOException {
-
+                            @QueryParameter boolean attach) throws ServletException, IOException
+    {
         name = Util.fixEmptyAndTrim(name);
 
         if (name==null) {
@@ -137,7 +137,8 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
         assert layoutInfo.getLayout() != RepositoryLayoutEnum.CUSTOM;
         String branchUrl = layoutInfo.getDefaultNewBranchUrl().replace("<new_branch_name>", name);
 
-        if (!attach) {
+        if (!attach)
+        {
             SvnClientManager svnMgr = SubversionSCM.createClientManager(
                     svn.createAuthenticationProvider(project, firstLocation));
 
@@ -159,20 +160,32 @@ public class IntegratableProjectAction extends AbstractModelObject implements Ac
             }
             urlsToCopyTo.add(branchUrl);
 
+            // trunk_location
             String trunk_location = firstLocation.getURL();
-            int drop_index = trunk_location.indexOf("/repo/touch/");
-            if (drop_index >= 0) {
+            final int drop_index = trunk_location.indexOf("/repo/touch/");
+            if (drop_index >= 0)
+            {
                 trunk_location = trunk_location.substring(drop_index+11);
             }
+
+            // trunk_revision
             SVNRevision trunk_revision;
-            try {
+            try
+            {
                 SVNInfo trunk_info = svnMgr.getWCClient().doInfo(SVNURL.parseURIEncoded(firstLocation.getURL()), SVNRevision.HEAD, SVNRevision.HEAD);
                 trunk_revision = trunk_info.getRevision();
-            } catch (SVNException e) {
+            }
+            catch (SVNException e)
+            {
                 trunk_revision = SVNRevision.HEAD;
             }
-            final String commitMessage = "[CREATE] Development branch created from " + trunk_location + "?r=" + trunk_revision.toString();
-            if (!createSVNCopy(svnMgr, firstLocation, trunk_revision, urlsToCopyTo, commitMessage, req, rsp)) {
+
+            // jira_number assuming branch naming "yyyyMMdd_<JIRA#>_<DescNoSpaces>"
+            final String jira_number = name.split("_")[1];
+
+            final String commitMessage = jira_number + ": CREATED - from " + trunk_location + "@" + trunk_revision.toString();
+            if (!createSVNCopy(svnMgr, firstLocation, trunk_revision, urlsToCopyTo, commitMessage, req, rsp))
+            {
                 return;
             }
         }
