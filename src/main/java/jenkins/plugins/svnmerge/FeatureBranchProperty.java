@@ -209,10 +209,10 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         final long[] create_n_last_rebase = parse_branch_log(job_svn_url, cm, logger);
                         /*{localCreate, upstreamCreate, localRebase, upstreamRebase}*/
-                        final long upstream_create_or_last_rebase = create_n_last_rebase[3] > 0 ? create_n_last_rebase[3] : create_n_last_rebase[1];
+                        final long create_or_last_rebase = create_n_last_rebase[2] > 0 ? create_n_last_rebase[2] : create_n_last_rebase[0];
 
                         SVNRevision mergeRevTo = upstreamRev >= 0 ? SVNRevision.create(upstreamRev) : wc.doInfo(up, HEAD, HEAD).getCommittedRevision();
-                        if (mergeRevTo.getNumber() <= upstream_create_or_last_rebase)
+                        if (mergeRevTo.getNumber() <= create_or_last_rebase)
                         {
                             logger.println("  No new commits since the last rebase. This rebase was a no-op.");
                             logger_print_build_status(logger, true);
@@ -221,11 +221,24 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         execute_workspace_svn_prepare(mr, job_svn_url, cm, logger);
 
+                        final String trunk_path_rel_to_repo_root = get_path_rel_to_repo_root(up, wc);
+                        final String svn_mergeinfo = get_svn_mergeinfo(mr, wc);
+                        long rebase_latest = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo, trunk_path_rel_to_repo_root);
+                        if (rebase_latest < create_or_last_rebase)
+                        {
+                            rebase_latest = create_or_last_rebase;
+                            logger.println("Latest rebase from log - r" + rebase_latest);
+                        }
+                        else
+                        {
+                            logger.println("Latest rebase from svn:mergeinfo - r" + rebase_latest);
+                        }
+
                         try
                         {
                             execute_merge(mr,
                                           up, /*mergeUrl*/
-                                          upstream_create_or_last_rebase, /*mergeRevFrom*/
+                                          rebase_latest, /*mergeRevFrom*/
                                           mergeRevTo, /*mergeRevTo*/
                                           cm,
                                           logger);
@@ -647,15 +660,31 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         return svn_url;
     }
 
-    private long get_latest_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root)
+    private long[] get_first_last_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root)
     {
-        final Pattern pattern_mergeinfo = Pattern.compile(merge_path_rel_to_repo_root+"(:\\d+-|:)(\\d+)");
-        Matcher matcher = pattern_mergeinfo.matcher(svn_mergeinfo);
+        final long[] ret_array = {-1, -1};
+        final Pattern pattern_from_to = Pattern.compile("^"+merge_path_rel_to_repo_root+":(\\d+)-(\\d+)\\D?$");
+        Matcher matcher = pattern_from_to.matcher(svn_mergeinfo);
         if (matcher.find())
         {
-            return Long.parseLong(matcher.group(2));
+            ret_array[0] = Long.parseLong(matcher.group(1));
+            ret_array[1] = Long.parseLong(matcher.group(2));
         }
-        return -1;
+        else
+        {
+            final Pattern pattern_to = Pattern.compile("^"+merge_path_rel_to_repo_root+":(\\d+)\\D?$");
+            matcher = pattern_to.matcher(svn_mergeinfo);
+            if (matcher.find())
+            {
+                ret_array[1] = Long.parseLong(matcher.group(1));
+            }
+        }
+        return ret_array;
+    }
+
+    private long get_latest_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root)
+    {
+        return get_first_last_merged_rev_from_mergeinfo(svn_mergeinfo, merge_path_rel_to_repo_root)[1];
     }
 
     private List<File> get_changed_files_list(final File mr, final SVNClientManager cm) throws SVNException
@@ -701,6 +730,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
             }
 
             final String[] lines = svn_mergeinfo.split("\n");
+            boolean changesFound = false;
 
             logger.println("Analysing svn:mergeinfo of " + f.toString());
             final StringBuilder out_svn_mergeinfo = new StringBuilder("");
@@ -709,6 +739,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                 if (l.contains(myself_path_rel_to_repo_root))
                 {
                     logger.println("Dropping svn:mergeinfo line " + l);
+                    changesFound = true;
                 }
                 else
                 {
@@ -717,8 +748,45 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                 }
             }
 
-            set_svn_mergeinfo(f, wc, out_svn_mergeinfo.toString());
+            if (changesFound)
+            {
+                set_svn_mergeinfo(f, wc, out_svn_mergeinfo.toString());
+            }
         }
+    }
+
+    private void workspace_update_svn_mergeinfo(final File mr, final String merge_path_rel_to_repo_root, final long revFrom, final long revTo, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    {
+        final SVNWCClient wc = cm.getWCClient();
+        final String svn_mergeinfo = get_svn_mergeinfo(mr, wc);
+        final String[] lines = svn_mergeinfo.split("\n");
+        long target_revFrom = revFrom;
+        long target_revTo = revTo;
+        final StringBuilder out_svn_mergeinfo = new StringBuilder("");
+        for (String l : lines)
+        {
+            if (l.contains(merge_path_rel_to_repo_root))
+            {
+                logger.println("Found svn:mergeinfo line " + l);
+                final long[] firstlast = get_first_last_merged_rev_from_mergeinfo(l, merge_path_rel_to_repo_root);
+                if (firstlast[0] > 0 && firstlast[0] < target_revFrom)
+                {
+                    target_revFrom = firstlast[0];
+                }
+                if (firstlast[1] > target_revTo)
+                {
+                    target_revTo = firstlast[1];
+                }
+            }
+            else
+            {
+                out_svn_mergeinfo.append(l);
+                out_svn_mergeinfo.append("\n");
+            }
+        }
+        final String new_line = merge_path_rel_to_repo_root + ":" + target_revFrom + "-" + target_revTo + "\n";
+        out_svn_mergeinfo.append(new_line);
+        set_svn_mergeinfo(mr, wc, out_svn_mergeinfo.toString());
     }
 
     private void execute_merge(final File mr, final SVNURL mergeUrl, final long mergeRevFrom, final SVNRevision mergeRevTo, final SVNClientManager cm, final PrintStream logger) throws SVNException
@@ -750,6 +818,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                    false); /*recordOnly*/
 
         workspace_clean_svn_mergeinfo(mr, myself_path_rel_to_repo_root, cm, logger);
+        final long curr_workspace_rev = wc.doInfo(mr, null).getCommittedRevision().getNumber();
+        final long merge_rev_to_svn_mergeinfo = curr_workspace_rev > mergeRevTo.getNumber() ? curr_workspace_rev : mergeRevTo.getNumber();
+        workspace_update_svn_mergeinfo(mr, merge_path_rel_to_repo_root, mergeRevFrom, merge_rev_to_svn_mergeinfo, cm, logger);
     }
 
     private SVNCommitInfo execute_commit(final File mr, final String commit_msg, final SVNClientManager cm, final PrintStream logger) throws SVNException
@@ -836,7 +907,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                     final Matcher matcher = COMMIT_MESSAGE_PATTERN_REBASE.matcher(e.getMessage());
                     if (!matcher.find())
                     {
-                        logger.println("Found at least a commit to be integrated: " + e.getMessage());
+                        logger.println("Found at least a commit to be integrated: r" + e.getRevision() + " " + e.getMessage());
                         changesFound.setValue(true);
                     }
                 }
