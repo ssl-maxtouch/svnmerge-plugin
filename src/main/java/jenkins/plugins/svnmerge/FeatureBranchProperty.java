@@ -223,7 +223,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         final String trunk_path_rel_to_repo_root = get_path_rel_to_repo_root(up, wc);
                         final String svn_mergeinfo = get_svn_mergeinfo(mr, wc);
-                        long rebase_latest = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo, trunk_path_rel_to_repo_root);
+                        long rebase_latest = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo, trunk_path_rel_to_repo_root, logger);
                         if (rebase_latest < create_or_last_rebase)
                         {
                             rebase_latest = create_or_last_rebase;
@@ -410,7 +410,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
                         final String branch_path_rel_to_repo_root = get_path_rel_to_repo_root(mergeUrl, wc);
                         final String svn_mergeinfo = get_svn_mergeinfo(mr, wc);
-                        long integrate_latest = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo, branch_path_rel_to_repo_root);
+                        long integrate_latest = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo, branch_path_rel_to_repo_root, logger);
                         if (integrate_latest < create_n_last_rebase[0])
                         {
                             integrate_latest = create_n_last_rebase[0];
@@ -421,12 +421,22 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             logger.println("Latest integration from svn:mergeinfo - r" + integrate_latest);
                         }
 
-                        execute_merge(mr,
-                                      mergeUrl, /*mergeUrl*/
-                                      integrate_latest, /*mergeRevFrom*/
-                                      mergeRevTo, /*mergeRevTo*/
-                                      cm,
-                                      logger);
+                        try
+                        {
+                            execute_merge(mr,
+                                          mergeUrl, /*mergeUrl*/
+                                          integrate_latest, /*mergeRevFrom*/
+                                          mergeRevTo, /*mergeRevTo*/
+                                          cm,
+                                          logger);
+                        }
+                        catch (SVNException e)
+                        {
+                            logger.println(e.getLocalizedMessage());
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
+                            logger_print_build_status(logger, false);
+                            return new IntegrationResult(-1L, mergeRevTo);
+                        }
 
                         if(foundConflict[0])
                         {
@@ -660,10 +670,10 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         return svn_url;
     }
 
-    private long[] get_first_last_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root)
+    private long[] get_first_last_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root, final PrintStream logger)
     {
         final long[] ret_array = {-1, -1};
-        final Pattern pattern_from_to = Pattern.compile("^"+merge_path_rel_to_repo_root+":(\\d+)-(\\d+)\\D?$");
+        final Pattern pattern_from_to = Pattern.compile(merge_path_rel_to_repo_root.replace("/", "\\/") + ":(\\d+)-(\\d+)$");
         Matcher matcher = pattern_from_to.matcher(svn_mergeinfo);
         if (matcher.find())
         {
@@ -672,19 +682,23 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         }
         else
         {
-            final Pattern pattern_to = Pattern.compile("^"+merge_path_rel_to_repo_root+":(\\d+)\\D?$");
+            final Pattern pattern_to = Pattern.compile(merge_path_rel_to_repo_root.replace("/", "\\/") + ":(\\d+)$");
             matcher = pattern_to.matcher(svn_mergeinfo);
             if (matcher.find())
             {
                 ret_array[1] = Long.parseLong(matcher.group(1));
             }
+            else
+            {
+                logger.println("\n? missed match: " + merge_path_rel_to_repo_root + "\n" + svn_mergeinfo + "\n");
+            }
         }
         return ret_array;
     }
 
-    private long get_latest_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root)
+    private long get_latest_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root, final PrintStream logger)
     {
-        return get_first_last_merged_rev_from_mergeinfo(svn_mergeinfo, merge_path_rel_to_repo_root)[1];
+        return get_first_last_merged_rev_from_mergeinfo(svn_mergeinfo, merge_path_rel_to_repo_root, logger)[1];
     }
 
     private List<File> get_changed_files_list(final File mr, final SVNClientManager cm) throws SVNException
@@ -768,7 +782,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
             if (l.contains(merge_path_rel_to_repo_root))
             {
                 logger.println("Found svn:mergeinfo line " + l);
-                final long[] firstlast = get_first_last_merged_rev_from_mergeinfo(l, merge_path_rel_to_repo_root);
+                final long[] firstlast = get_first_last_merged_rev_from_mergeinfo(l, merge_path_rel_to_repo_root, logger);
                 if (firstlast[0] > 0 && firstlast[0] < target_revFrom)
                 {
                     target_revFrom = firstlast[0];
@@ -797,7 +811,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         final String myself_path_rel_to_repo_root = get_path_rel_to_repo_root(mr, wc);
         final String merge_path_rel_to_repo_root = get_path_rel_to_repo_root(mergeUrl, wc);
         final String svn_mergeinfo_pre = get_svn_mergeinfo(mr, wc);
-        final long latest_merged_rev_from_mergeinfo = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo_pre, merge_path_rel_to_repo_root);
+        final long latest_merged_rev_from_mergeinfo = get_latest_merged_rev_from_mergeinfo(svn_mergeinfo_pre, merge_path_rel_to_repo_root, logger);
         final long merge_from_opt = latest_merged_rev_from_mergeinfo > mergeRevFrom ? latest_merged_rev_from_mergeinfo : mergeRevFrom;
 
         workspace_clean_svn_mergeinfo(mr, myself_path_rel_to_repo_root, cm, logger);
