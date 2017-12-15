@@ -387,21 +387,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         SVNURL mergeUrl = branchURL != null ? SVNURL.parseURIDecoded(branchURL) : job_svn_url;
                         SVNRevision mergeRevTo = branchRev >= 0 ? SVNRevision.create(branchRev) : wc.doInfo(mergeUrl, HEAD, HEAD).getCommittedRevision();
 
-                        // do we have any meaningful changes in this branch worthy of integration?
-                        if (lastIntegrationSourceRevision != null)
-                        {
-                            final boolean changesFound = integrate_check_necessary(mergeUrl,
-                                                                                   mergeRevTo,
-                                                                                   lastIntegrationSourceRevision,
-                                                                                   cm,
-                                                                                   logger);
-                            if (!changesFound)
-                            {
-                                logger.println("No changes to be integrated. Skipping integration.");
-                                return new IntegrationResult(0, mergeRevTo);
-                            }
-                        }
-
                         final long[] create_n_last_rebase = parse_branch_log(mergeUrl, cm, logger);
                         /*{localCreate, upstreamCreate, localRebase, upstreamRebase}*/
                         final long upstream_create_or_last_rebase = create_n_last_rebase[3] > 0 ? create_n_last_rebase[3] : create_n_last_rebase[1];
@@ -419,6 +404,19 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         else
                         {
                             logger.println("Latest integration from svn:mergeinfo - r" + integrate_latest);
+                        }
+
+                        // do we have any meaningful changes in this branch worthy of integration?
+                        final boolean changesFound = integrate_check_necessary(mergeUrl,
+                                                                               mergeRevTo,
+                                                                               integrate_latest,
+                                                                               cm,
+                                                                               logger);
+                        if (!changesFound)
+                        {
+                            logger.println("No changes to be integrated. Skipping integration.");
+                            logger_print_build_status(logger, true);
+                            return new IntegrationResult(0, mergeRevTo);
                         }
 
                         try
@@ -917,15 +915,15 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         logger.printf("Workspace is %s r%s\n", wsState.getURL().toString() , wsState.getCommittedRevision().toString());
     }
 
-    private boolean integrate_check_necessary(final SVNURL mergeUrl, final SVNRevision mergeRevTo, final long lastIntegrationSourceRevision, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private boolean integrate_check_necessary(final SVNURL mergeUrl, final SVNRevision mergeRevTo, final long integrate_latest, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
         final MutableBoolean changesFound = new MutableBoolean(false);
-        logger.println("Check for changes after our last integration of r" + lastIntegrationSourceRevision);
+        logger.println("Check for changes after our last integration of r" + integrate_latest);
         cm.getLogClient().doLog(mergeUrl,
                                 null,     /*paths*/
                                 mergeRevTo, /*pegRevision*/
                                 mergeRevTo, /*startRevision*/
-                                SVNRevision.create(lastIntegrationSourceRevision), /*endRevision*/
+                                SVNRevision.create(integrate_latest), /*endRevision*/
                                 true,     /*stopOnCopy*/
                                 false,    /*discoverChangedPaths*/
                                 0,        /*limit*/
@@ -935,11 +933,15 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
             {
                 if (!changesFound.booleanValue())
                 {
-                    final Matcher matcher = COMMIT_MESSAGE_PATTERN_REBASE.matcher(e.getMessage());
+                    Matcher matcher = COMMIT_MESSAGE_PATTERN_REBASE.matcher(e.getMessage());
                     if (!matcher.find())
                     {
-                        logger.println("Found at least a commit to be integrated: r" + e.getRevision() + " " + e.getMessage());
-                        changesFound.setValue(true);
+                        matcher = COMMIT_MESSAGE_PATTERN_CREATE.matcher(e.getMessage());
+                        if (!matcher.find())
+                        {
+                            logger.println("Found at least a commit to be integrated: r" + e.getRevision() + " " + e.getMessage());
+                            changesFound.setValue(true);
+                        }
                     }
                 }
             }
