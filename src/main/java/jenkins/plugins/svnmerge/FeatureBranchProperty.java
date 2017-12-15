@@ -673,24 +673,41 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
     private long[] get_first_last_merged_rev_from_mergeinfo(final String svn_mergeinfo, final String merge_path_rel_to_repo_root, final PrintStream logger)
     {
         final long[] ret_array = {-1, -1};
-        final Pattern pattern_from_to = Pattern.compile(merge_path_rel_to_repo_root.replace("/", "\\/") + ":(\\d+)-(\\d+)$");
-        Matcher matcher = pattern_from_to.matcher(svn_mergeinfo);
-        if (matcher.find())
+        final List<String> mergeinfo_lines = new ArrayList<String>();
+        if (svn_mergeinfo.contains("\n"))
         {
-            ret_array[0] = Long.parseLong(matcher.group(1));
-            ret_array[1] = Long.parseLong(matcher.group(2));
+            mergeinfo_lines.addAll(Arrays.asList(svn_mergeinfo.split("\n")));
         }
         else
         {
-            final Pattern pattern_to = Pattern.compile(merge_path_rel_to_repo_root.replace("/", "\\/") + ":(\\d+)$");
-            matcher = pattern_to.matcher(svn_mergeinfo);
-            if (matcher.find())
+            mergeinfo_lines.add(svn_mergeinfo);
+        }
+        for (final String str : mergeinfo_lines)
+        {
+            if (str.startsWith(merge_path_rel_to_repo_root))
             {
-                ret_array[1] = Long.parseLong(matcher.group(1));
-            }
-            else
-            {
-                logger.println("\n? missed match: " + merge_path_rel_to_repo_root + "\n" + svn_mergeinfo + "\n");
+                final String colon_n_revs = str.substring(merge_path_rel_to_repo_root.length());
+                final Pattern pattern_from_to = Pattern.compile(":(\\d+)-(\\d+)$");
+                Matcher matcher = pattern_from_to.matcher(colon_n_revs);
+                if (matcher.find())
+                {
+                    ret_array[0] = Long.parseLong(matcher.group(1));
+                    ret_array[1] = Long.parseLong(matcher.group(2));
+                }
+                else
+                {
+                    final Pattern pattern_to = Pattern.compile(":(\\d+)$");
+                    matcher = pattern_to.matcher(colon_n_revs);
+                    if (matcher.find())
+                    {
+                        ret_array[1] = Long.parseLong(matcher.group(1));
+                    }
+                    else
+                    {
+                        logger.println("\n? missed match: " + merge_path_rel_to_repo_root + "\n" + colon_n_revs + "\n");
+                    }
+                }
+                break;
             }
         }
         return ret_array;
