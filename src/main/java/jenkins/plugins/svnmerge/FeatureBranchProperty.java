@@ -621,8 +621,12 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                                               "svn:mergeinfo", /*propName*/
                                                               HEAD, /*pegRevision*/
                                                               HEAD); /*revision*/
-        final SVNPropertyValue mergeinfo_property_value = mergeinfo_property.getValue();
-        final String mergeinfo_string = mergeinfo_property_value.getString();
+        String mergeinfo_string = null;
+        if (null != mergeinfo_property)
+        {
+            final SVNPropertyValue mergeinfo_property_value = mergeinfo_property.getValue();
+            mergeinfo_string = mergeinfo_property_value.getString();
+        }
         return mergeinfo_string;
     }
 
@@ -753,7 +757,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         for (File f : fileList)
         {
             final String svn_mergeinfo = get_svn_mergeinfo(f, wc);
-            if (svn_mergeinfo.isEmpty())
+            if ((null == svn_mergeinfo) || svn_mergeinfo.isEmpty())
             {
                 continue;
             }
