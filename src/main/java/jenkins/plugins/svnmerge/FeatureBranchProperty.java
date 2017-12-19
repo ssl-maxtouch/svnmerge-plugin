@@ -560,6 +560,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
     private static final Pattern COMMIT_MESSAGE_PATTERN_CREATE = Pattern.compile(":\\s*CREATED\\s*-.+@(\\d+)");
     private static final Pattern COMMIT_MESSAGE_PATTERN_REBASE = Pattern.compile(":\\s*REBASED\\s*-.+@(\\d+)");
+    private static final Pattern COMMIT_MESSAGE_PATTERN_REBASE_NO_UPSTREV = Pattern.compile(":\\s*REBASED\\s*-");
 
     private long[] parse_branch_log(final SVNURL branch_svn_url, final SVNClientManager cm, final PrintStream logger) throws SVNException
     {
@@ -599,6 +600,16 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             ret_array[2] = latestProcessedRev[0];
                             ret_array[3] = Long.parseLong(matcher.group(1));
                             logger.println("Found a rebase at r" + ret_array[2] + " - upstream r" + ret_array[3]);
+                        }
+                        else
+                        {
+                            matcher = COMMIT_MESSAGE_PATTERN_REBASE_NO_UPSTREV.matcher(e.getMessage());
+                            if (matcher.find())
+                            {
+                                ret_array[2] = latestProcessedRev[0];
+                                ret_array[3] = latestProcessedRev[0];
+                                logger.println("Found a rebase (no upstream rev found in comment) at r" + ret_array[2]);
+                            }
                         }
                     }
                 }
@@ -940,11 +951,15 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                     Matcher matcher = COMMIT_MESSAGE_PATTERN_REBASE.matcher(e.getMessage());
                     if (!matcher.find())
                     {
-                        matcher = COMMIT_MESSAGE_PATTERN_CREATE.matcher(e.getMessage());
+                        matcher = COMMIT_MESSAGE_PATTERN_REBASE_NO_UPSTREV.matcher(e.getMessage());
                         if (!matcher.find())
                         {
-                            logger.println("Found at least a commit to be integrated: r" + e.getRevision() + " " + e.getMessage());
-                            changesFound.setValue(true);
+                            matcher = COMMIT_MESSAGE_PATTERN_CREATE.matcher(e.getMessage());
+                            if (!matcher.find())
+                            {
+                                logger.println("Found at least a commit to be integrated: r" + e.getRevision() + " " + e.getMessage());
+                                changesFound.setValue(true);
+                            }
                         }
                     }
                 }
