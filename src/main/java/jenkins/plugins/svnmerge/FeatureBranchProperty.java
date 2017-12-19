@@ -241,6 +241,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                           rebase_latest, /*mergeRevFrom*/
                                           mergeRevTo, /*mergeRevTo*/
                                           cm,
+                                          false, /*is_integrate*/
                                           logger);
                         }
                         catch (SVNException e)
@@ -345,8 +346,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
      */
     public IntegrationResult integrate(final TaskListener listener, final String branchURL, final long branchRev, final String commitMessage) throws IOException, InterruptedException
     {
-        final Long lastIntegrationSourceRevision = getlastIntegrationSourceRevision();
-
         final SubversionSCM svn = (SubversionSCM) getUpstreamProject().getScm();
         final ISVNAuthenticationProvider provider = svn.createAuthenticationProvider(getUpstreamProject(), svn.getLocations()[0]);
 
@@ -426,6 +425,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                           integrate_latest, /*mergeRevFrom*/
                                           mergeRevTo, /*mergeRevTo*/
                                           cm,
+                                          true, /*is_integrate*/
                                           logger);
                         }
                         catch (SVNException e)
@@ -477,6 +477,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                                           upstream_create_or_last_rebase,
                                           SVNRevision.create(trunkCommit),
                                           cm,
+                                          false, /*is_integrate*/
                                           logger);
                             wc.doResolve(mr, INFINITY, true, true, true, SVNConflictChoice.MERGED);
 
@@ -833,7 +834,13 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         set_svn_mergeinfo(mr, wc, out_svn_mergeinfo.toString());
     }
 
-    private void execute_merge(final File mr, final SVNURL mergeUrl, final long mergeRevFrom, final SVNRevision mergeRevTo, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private void execute_merge(final File mr,
+                               final SVNURL mergeUrl,
+                               final long mergeRevFrom,
+                               final SVNRevision mergeRevTo,
+                               final SVNClientManager cm,
+                               final boolean is_integrate,
+                               final PrintStream logger) throws SVNException
     {
         final SVNDiffClient dc = cm.getDiffClient();
         final SVNWCClient wc = cm.getWCClient();
@@ -846,16 +853,16 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
         workspace_clean_svn_mergeinfo(mr, myself_path_rel_to_repo_root, cm, logger);
 
-        logger.println("The Merge will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
+        logger.println("The " + (is_integrate ? "Integrate":"Rebase") + " will be from " + mergeUrl + " r" + merge_from_opt + " to r" + mergeRevTo);
 
         final SVNRevisionRange r = new SVNRevisionRange(SVNRevision.create(merge_from_opt), mergeRevTo);
         // https://svnkit.com/javadoc/org/tmatesoft/svn/core/wc/SVNDiffClient.html
         //dc.setAllowMixedRevisionsWCForMerge(true);
-        dc.doMerge(mergeUrl,
+        dc.doMerge(mergeUrl, /*srcURL*/
                    SVNRevision.create(merge_from_opt), /*pegRevision*/
-                   Arrays.asList(r),
-                   mr,
-                   INFINITY,
+                   Arrays.asList(r), /*rangesToMerge */
+                   mr, /*dstPath*/
+                   INFINITY, /*depth */
                    true,   /*useAncestry*/
                    true,   /*force*/
                    false,  /*dryRun*/
@@ -867,7 +874,10 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         workspace_update_svn_mergeinfo(mr, merge_path_rel_to_repo_root, mergeRevFrom, merge_rev_to_svn_mergeinfo, cm, logger);
     }
 
-    private SVNCommitInfo execute_commit(final File mr, final String commit_msg, final SVNClientManager cm, final PrintStream logger) throws SVNException
+    private SVNCommitInfo execute_commit(final File mr,
+                                         final String commit_msg,
+                                         final SVNClientManager cm,
+                                         final PrintStream logger) throws SVNException
     {
         logger.println("Committing changes");
 
