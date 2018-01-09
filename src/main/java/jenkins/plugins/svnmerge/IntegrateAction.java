@@ -225,7 +225,7 @@ public class IntegrateAction extends AbstractSvnmergeTaskAction<IntegrateSetting
 
     private String getCommitMessage()
     {
-        return COMMIT_MESSAGE_PREFIX + " " + build.getFullDisplayName() + " " + COMMIT_MESSAGE_SUFFIX;
+        return COMMIT_MESSAGE_PREFIX + " - " + build.getFullDisplayName() + " " + COMMIT_MESSAGE_SUFFIX;
     }
 
     /**
