@@ -234,6 +234,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             logger.println("Latest rebase from svn:mergeinfo - r" + rebase_latest);
                         }
 
+                        final String commit_msg = get_jira_number(job_svn_url.toString()) +
+                                                    ": " + RebaseAction.COMMIT_MESSAGE_PREFIX +
+                                                    " - from " + remove_url_prefix(up.toString()) + "@" + mergeRevTo;
                         try
                         {
                             execute_merge(mr,
@@ -247,14 +250,14 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         catch (SVNException e)
                         {
                             logger.println(e.getLocalizedMessage());
-                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString(), commit_msg);
                             logger_print_build_status(logger, false);
                             return -1L;
                         }
 
                         if(foundConflict[0])
                         {
-                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString(), commit_msg);
                             logger_print_build_status(logger, false);
                             return -1L;
                         }
@@ -262,9 +265,6 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         {
                             try
                             {
-                                final String commit_msg = get_jira_number(job_svn_url.toString()) +
-                                                            ": " + RebaseAction.COMMIT_MESSAGE_PREFIX +
-                                                            " - from " + remove_url_prefix(up.toString()) + "@" + mergeRevTo;
                                 SVNCommitInfo ci = execute_commit(mr, commit_msg, cm, logger);
                                 if (ci.getNewRevision() < 0)
                                 {
@@ -282,7 +282,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             catch (SVNException e)
                             {
                                 logger.println(e.getLocalizedMessage());
-                                logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString());
+                                logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), up.toString(), commit_msg);
                                 logger_print_build_status(logger, false);
                                 return -1L;
                             }
@@ -418,6 +418,9 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                             return new IntegrationResult(0, mergeRevTo);
                         }
 
+                        final String jira_commit_prefix = get_jira_number(mergeUrl.toString()) + ": ";
+                        String commit_msg = jira_commit_prefix + commitMessage + "\n" + remove_url_prefix(mergeUrl.toString()) + "@" + mergeRevTo;
+
                         try
                         {
                             execute_merge(mr,
@@ -431,22 +434,20 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         catch (SVNException e)
                         {
                             logger.println(e.getLocalizedMessage());
-                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString(), commit_msg);
                             logger_print_build_status(logger, false);
                             return new IntegrationResult(-1L, mergeRevTo);
                         }
 
                         if(foundConflict[0])
                         {
-                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString(), commit_msg);
                             logger_print_build_status(logger, false);
                             return new IntegrationResult(-1L, mergeRevTo);
                         }
 
-                        final String jira_commit_prefix = get_jira_number(mergeUrl.toString()) + ": ";
+                        
                         long trunkCommit;
-
-                        String commit_msg = jira_commit_prefix + commitMessage + "\n" + remove_url_prefix(mergeUrl.toString()) + "@" + mergeRevTo;
                         SVNCommitInfo ci;
                         try
                         {
@@ -455,7 +456,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                         catch (SVNException e)
                         {
                             logger.println(e.getLocalizedMessage());
-                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString());
+                            logger_print_merge_conflict(logger, wc.doInfo(mr, null).getURL().toString(), mergeUrl.toString(), commit_msg);
                             logger_print_build_status(logger, false);
                             return new IntegrationResult(-1L, mergeRevTo);
                         }
@@ -978,7 +979,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         return changesFound.booleanValue();
     }
 
-    private void logger_print_merge_conflict(final PrintStream logger, final String mergeTo_URL, final String mergeFrom_URL)
+    private void logger_print_merge_conflict(final PrintStream logger, final String mergeTo_URL, final String mergeFrom_URL, final String commitMsg)
     {
         logger.println("\n\n!!! Found conflict !!!\n");
         logger.printf( "- Checkout (or Update) %s\n", mergeTo_URL);
@@ -991,7 +992,8 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
         logger.println("  - click 'Merge'");
         logger.println("  - click 'Edit conflict' - the merge tool will pop up");
         logger.println("  - click 'Resolved'");
-        logger.println("\nAfter resolving the conflict, commit and repeat the rebase\n");
+        logger.println("\nAfter resolving the conflict, commit and repeat the rebase.");
+        logger.printf( "Proposed commit message:\n%s\n\n", commitMsg);
         logger.println("Work Instruction:\nhttp://mob-doc.ssluk.solomonsystech.com/QPulseDocumentService/Documents.svc/documents/active/attachment?number=MOB-O-NFI-GU-030\n");
     }
 
