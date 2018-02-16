@@ -1,6 +1,7 @@
 package jenkins.plugins.svnmerge;
 
 import hudson.Extension;
+import hudson.FilePath;
 import hudson.FilePath.FileCallable;
 import hudson.model.AbstractBuild;
 import hudson.model.AbstractProject;
@@ -51,6 +52,7 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.apache.commons.lang.mutable.MutableBoolean;
+import org.jenkinsci.remoting.RoleChecker;
 
 import static org.tmatesoft.svn.core.SVNDepth.*;
 import org.tmatesoft.svn.core.SVNPropertyValue;
@@ -174,9 +176,15 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
             logger.print("No workspace found for project! Please perform a build first.\n");
             return -1L;
         }
-        return build.getModuleRoot().act(
+        final FilePath module_root = build.getModuleRoot();
+        final long ret_val = module_root.act(
             new FileCallable<Long>()
             {
+                @Override
+                public void checkRoles(RoleChecker rc) throws SecurityException
+                {
+                };
+                @Override
                 public Long invoke(File mr, VirtualChannel virtualChannel) throws IOException
                 {
                     try
@@ -295,6 +303,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                 }
             }
         );
+        return ret_val;
     }
 
     /**
@@ -351,9 +360,15 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
 
         final ModuleLocation upstreamLocation = getUpstreamSubversionLocation();
 
-        return owner.getModuleRoot().act(
+        final FilePath module_root = owner.getModuleRoot();
+        final IntegrationResult ret_val = module_root.act(
             new FileCallable<IntegrationResult>()
             {
+                @Override
+                public void checkRoles(RoleChecker rc) throws SecurityException
+                {
+                };
+                @Override
                 public IntegrationResult invoke(File mr, VirtualChannel virtualChannel) throws IOException
                 {
                     try
@@ -500,6 +515,7 @@ public class FeatureBranchProperty extends JobProperty<AbstractProject<?,?>> imp
                 }
             }
         );
+        return ret_val;
     }
 
     private Long getlastIntegrationSourceRevision()
