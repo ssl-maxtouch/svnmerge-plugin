@@ -50,7 +50,7 @@
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
       <artifactId>subversion</artifactId>
-      <version>2.10.5+ssluk01</version>
+      <version>2.11.0</version>
     </dependency>
     <dependency>
       <groupId>org.jenkins-ci.plugins</groupId>
